@@ -448,29 +448,71 @@ elif page == "Model Predictions":
                                    'user_id', 'source_ip', 'geo_location', 'service_accessed', 
                                    'auth_method', 'Session_ID', 'Label', 'Attack_Type']
                     
-                    # Get numeric columns for prediction
-                    numeric_cols = [col for col in processed_df.select_dtypes(include=[np.number]).columns 
-                                   if col not in exclude_cols]
+                    # Define columns
+                    exclude_cols = ['session_id', 'user_id', 'session_label', 'anomaly_label', 'start_ts', 'end_ts']
+
+                    numerical_features = ['num_events', 'total_bytes', 'mean_bytes', 'max_bytes', 
+                                          'mean_resp', 'std_resp', 'unique_actions', 'num_failures', 'duration_s']
+
+                    categorical_features = ['user_role', 'region']
+
+                    # For RF & XGB: Use preprocessor with both numerical + categorical
+                    X = processed_df[numerical_features + categorical_features].fillna(0)
                     
-                    if len(numeric_cols) == 0:
-                        st.error("No numeric features found for prediction")
+                    # Check if preprocessor is available
+                    if models['preprocessor'] is not None:
+                        X_processed = models['preprocessor'].transform(X)  # → 16 features
                     else:
-                        # Prepare feature matrix
-                        X = processed_df[numeric_cols].fillna(0)
-                        n_samples = len(X)
+                        st.warning("⚠️ Preprocessor not loaded. Using raw features for RF/XGB.")
+                        X_processed = X.values
+                    
+                    # For IF: Use only numerical features with IF scaler
+                    X_numerical = processed_df[numerical_features].fillna(0)
+                    
+                    # Check if IF scaler is available
+                    if models['if_scaler'] is not None:
+                        X_scaled = models['if_scaler'].transform(X_numerical)  # → 9 features
+                    else:
+                        st.warning("⚠️ IF Scaler not loaded. Using raw features for Isolation Forest.")
+                        X_scaled = X_numerical.values
+                    
+                    # Try to get RF predictions
+                    rf_pred = None
+                    rf_proba = None
+                    if models['rf'] is not None:
+                        try:
+                            rf_pred = models['rf'].predict(X_processed)
+                            rf_proba = models['rf'].predict_proba(X_processed)[:, 1]
+                        except Exception as e:
+                            st.warning(f"⚠️ RF prediction failed: {str(e)}")
+                            rf_pred = None
+                            rf_proba = None
+                    
+                    # Try to get IF predictions
+                    if_pred = None
+                    if_score = None
+                    if models['if'] is not None:
+                        try:
+                            if_pred = models['if'].predict(X_scaled)
+                            if_score = models['if'].score_samples(X_scaled)
+                        except Exception as e:
+                            st.warning(f"⚠️ Isolation Forest prediction failed: {str(e)}")
+                            if_pred = None
+                            if_score = None
+                    
+                    n_samples = len(X)
+                    st.info(f"Running predictions on {n_samples} samples...")
+                    
+                    # ===================================================================
+                    # RANDOM FOREST PREDICTIONS
+                    # ===================================================================
+                    if model_choice == "Random Forest" or model_choice == "All Models":
+                        st.subheader("🌳 Random Forest Classifier")
                         
-                        st.info(f"Running predictions on {n_samples} samples with {len(numeric_cols)} features...")
-                        
-                        # ===================================================================
-                        # RANDOM FOREST PREDICTIONS
-                        # ===================================================================
-                        if model_choice == "Random Forest" or model_choice == "All Models":
-                            st.subheader("🌳 Random Forest Classifier")
-                            
+                        if rf_pred is None:
+                            st.error("❌ Random Forest model not available or failed to predict.")
+                        else:
                             try:
-                                rf_pred = models['rf'].predict(X)
-                                rf_proba = models['rf'].predict_proba(X)[:, 1]  # Probability of anomaly
-                                
                                 st.session_state.predictions['rf'] = {
                                     'predictions': rf_pred,
                                     'probabilities': rf_proba
@@ -511,8 +553,8 @@ elif page == "Model Predictions":
                             st.subheader("⚡ XGBoost Classifier")
                             
                             try:
-                                xgb_pred = models['xgb'].predict(X)
-                                xgb_proba = models['xgb'].predict_proba(X)[:, 1]
+                                xgb_pred = models['xgb'].predict(X_processed)
+                                xgb_proba = models['xgb'].predict_proba(X_processed)[:, 1]
                                 
                                 st.session_state.predictions['xgb'] = {
                                     'predictions': xgb_pred,
@@ -552,48 +594,42 @@ elif page == "Model Predictions":
                         if model_choice == "Isolation Forest" or model_choice == "All Models":
                             st.subheader("🌲 Isolation Forest")
                             
-                            try:
-                                # Scale features for Isolation Forest
-                                if scale_features and models['scaler'] is not None:
-                                    X_scaled = models['scaler'].transform(X)
-                                else:
-                                    X_scaled = X.values
-                                
-                                if_pred = models['if'].predict(X_scaled)
-                                if_score = models['if'].score_samples(X_scaled)
-                                
-                                st.session_state.predictions['if'] = {
-                                    'predictions': if_pred,
-                                    'scores': if_score
-                                }
-                                
-                                col1, col2, col3 = st.columns(3)
-                                with col1:
-                                    anomalies = (if_pred == -1).sum()
-                                    st.metric("Anomalies Detected", f"{anomalies:,}")
-                                with col2:
-                                    normal = (if_pred == 1).sum()
-                                    st.metric("Normal Records", f"{normal:,}")
-                                with col3:
-                                    pct = (anomalies / len(if_pred)) * 100
-                                    st.metric("Anomaly Rate", f"{pct:.2f}%")
-                                
-                                if_results = pd.DataFrame({
-                                    'Prediction': ['Anomaly' if x == -1 else 'Normal' for x in if_pred],
-                                    'Anomaly Score': if_score
-                                })
-                                
-                                fig = px.histogram(if_results, x='Anomaly Score',
-                                                 color='Prediction',
-                                                 nbins=50,
-                                                 title="Isolation Forest Anomaly Score Distribution",
-                                                 color_discrete_map={'Normal': '#00C851', 'Anomaly': '#ff4444'})
-                                st.plotly_chart(fig, use_container_width=True)
-                                
-                                st.info("Note: Isolation Forest scores are negative. More negative = more anomalous")
-                                
-                            except Exception as e:
-                                st.error(f"Error with Isolation Forest: {str(e)}")
+                            if if_pred is None:
+                                st.error("❌ Isolation Forest model not available or failed to predict.")
+                            else:
+                                try:
+                                    st.session_state.predictions['if'] = {
+                                        'predictions': if_pred,
+                                        'scores': if_score
+                                    }
+                                    
+                                    col1, col2, col3 = st.columns(3)
+                                    with col1:
+                                        anomalies = (if_pred == -1).sum()
+                                        st.metric("Anomalies Detected", f"{anomalies:,}")
+                                    with col2:
+                                        normal = (if_pred == 1).sum()
+                                        st.metric("Normal Records", f"{normal:,}")
+                                    with col3:
+                                        pct = (anomalies / len(if_pred)) * 100
+                                        st.metric("Anomaly Rate", f"{pct:.2f}%")
+                                    
+                                    if_results = pd.DataFrame({
+                                        'Prediction': ['Anomaly' if x == -1 else 'Normal' for x in if_pred],
+                                        'Anomaly Score': if_score
+                                    })
+                                    
+                                    fig = px.histogram(if_results, x='Anomaly Score',
+                                                     color='Prediction',
+                                                     nbins=50,
+                                                     title="Isolation Forest Anomaly Score Distribution",
+                                                     color_discrete_map={'Normal': '#00C851', 'Anomaly': '#ff4444'})
+                                    st.plotly_chart(fig, use_container_width=True)
+                                    
+                                    st.info("Note: Isolation Forest scores are negative. More negative = more anomalous")
+                                    
+                                except Exception as e:
+                                    st.error(f"Error with Isolation Forest: {str(e)}")
                         
                         st.success("✅ Predictions completed successfully!")
                         
