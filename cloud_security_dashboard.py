@@ -508,8 +508,8 @@ elif page == "Model Predictions":
                     X_numerical = processed_df[numerical_features].fillna(0)
                     
                     # Check if IF scaler is available
-                    if models['if_scaler'] is not None:
-                        X_scaled = models['if_scaler'].transform(X_numerical)  # → 9 features
+                    if models['scaler'] is not None:
+                        X_scaled = models['scaler'].transform(X_numerical)  # → 9 features
                     else:
                         st.warning("⚠️ IF Scaler not loaded. Using raw features for Isolation Forest.")
                         X_scaled = X_numerical.values
@@ -885,10 +885,13 @@ elif page == "Performance Metrics":
         else:
             # Check if dataset has labels
             df = st.session_state.data
-            has_labels = 'label' in df.columns or 'Label' in df.columns
+            has_labels = ('ground_truth' in df.columns or 'anomaly_label' in df.columns or 
+                         'label' in df.columns or 'Label' in df.columns)
             
             if not has_labels:
                 st.warning("⚠️ Dataset does not contain labels for validation. Showing simulated metrics.")
+            else:
+                st.info("✅ Dataset contains labels. Using actual ground truth for evaluation.")
             
             # Model selection for metrics
             st.header("🎯 Select Model for Evaluation")
@@ -911,19 +914,103 @@ elif page == "Performance Metrics":
             if st.button("📊 Generate Performance Metrics", type="primary"):
                 with st.spinner("Calculating performance metrics..."):
                     try:
-                        # Simulate ground truth labels and predictions
-                        n_samples = len(df)
-                        y_true = np.random.choice([0, 1], size=n_samples, p=[0.7, 0.3])
-                        y_pred = np.random.choice([0, 1], size=n_samples, p=[0.75, 0.25])
-                        y_proba = np.random.random(n_samples)
+                        # Load models first
+                        models = load_models()
+                        if models is None:
+                            st.error("Failed to load models. Please ensure model files exist in the 'models/' directory.")
+                            st.stop()
+                        
+                        # Map model display names to model keys
+                        model_key_map = {
+                            "Random Forest": "rf",
+                            "XGBoost": "xgb",
+                            "Ensemble": "if"  # Using Isolation Forest as ensemble placeholder
+                        }
+                        model_key = model_key_map.get(metric_model)
+                        
+                        # Define columns to exclude from features
+                        exclude_cols = ['session_id', 'timestamp', 'label', 'attack_type', 
+                                       'ground_truth', 'anomaly_label', 'event_id', 'event_time',
+                                       'request_id', 'attack_id', 'attack_stage', 'session_label',
+                                       'principal_arn', 'principal_type', 'user_agent', 
+                                       'event_source', 'event_name', 'user_id',
+                                       'auth_method', 'Session_ID', 'Label', 'Attack_Type']
+                        
+                        # Filter data based on attack type
+                        df_filtered = df.copy()
+                        
+                        # Check if attack_type column exists
+                        if 'attack_type' in df_filtered.columns:
+                            if attack_type == "Seen Attacks":
+                                # Filter for only known/labeled attacks
+                                df_filtered = df_filtered[df_filtered['attack_type'].notna() & (df_filtered['attack_type'] != '')]
+                            elif attack_type == "Unseen Attacks":
+                                # Filter for only unknown attacks (no attack_type or empty)
+                                df_filtered = df_filtered[df_filtered['attack_type'].isna() | (df_filtered['attack_type'] == '')]
+                            # "All Attacks" uses all data
+                        else:
+                            st.warning("⚠️ 'attack_type' column not found. Using all data for evaluation.")
+                        
+                        # Use ground truth labels from dataset
+                        label_col = 'ground_truth' if 'ground_truth' in df_filtered.columns else 'anomaly_label'
+                        y_true = df_filtered[label_col].astype(int).values
+                        
+                        # Prepare features based on model type
+                        if model_key in ["rf", "xgb"]:
+                            # For RF & XGB: Use preprocessor with numerical + categorical features
+                            numerical_features = ['num_events', 'total_bytes', 'mean_bytes', 'max_bytes', 
+                                                'mean_resp', 'std_resp', 'unique_actions', 'num_failures', 'duration_s']
+                            categorical_features = ['user_role', 'region']
+                            
+                            available_features = [f for f in numerical_features + categorical_features if f in df_filtered.columns]
+                            X_features = df_filtered[available_features].fillna(0)
+                            
+                            # Apply preprocessor
+                            if models['preprocessor'] is not None:
+                                X_processed = models['preprocessor'].transform(X_features)
+                            else:
+                                st.warning("⚠️ Preprocessor not loaded. Cannot make predictions for this model.")
+                                st.stop()
+                        else:
+                            # For IF: Use numerical features with scaler
+                            numerical_features = ['num_events', 'total_bytes', 'mean_bytes', 'max_bytes', 
+                                                'mean_resp', 'std_resp', 'unique_actions', 'num_failures', 'duration_s']
+                            available_features = [f for f in numerical_features if f in df_filtered.columns]
+                            X_features = df_filtered[available_features].fillna(0)
+                            
+                            # Apply scaler
+                            if models['scaler'] is not None:
+                                X_processed = models['scaler'].transform(X_features)
+                            else:
+                                st.warning("⚠️ Scaler not loaded. Cannot make predictions for this model.")
+                                st.stop()
+                        
+                        # Get model
+                        model = models.get(model_key)
+                        
+                        if model is None:
+                            st.error(f"Model '{metric_model}' not loaded. Please check models directory.")
+                            st.stop()
+                        
+                        # Make predictions
+                        if model_key == "if":
+                            # Isolation Forest returns -1 for anomalies, 1 for normal
+                            y_pred_raw = model.predict(X_processed)
+                            y_pred = (y_pred_raw == -1).astype(int)  # Convert to 1 for anomaly, 0 for normal
+                            y_proba = (model.score_samples(X_processed) - model.score_samples(X_processed).min()) / \
+                                     (model.score_samples(X_processed).max() - model.score_samples(X_processed).min())
+                        else:
+                            # RF and XGB
+                            y_pred = model.predict(X_processed).astype(int)
+                            y_proba = model.predict_proba(X_processed)[:, 1]
                         
                         # Calculate metrics
                         from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
                         
                         accuracy = accuracy_score(y_true, y_pred)
-                        precision = precision_score(y_true, y_pred)
-                        recall = recall_score(y_true, y_pred)
-                        f1 = f1_score(y_true, y_pred)
+                        precision = precision_score(y_true, y_pred, zero_division=0)
+                        recall = recall_score(y_true, y_pred, zero_division=0)
+                        f1 = f1_score(y_true, y_pred, zero_division=0)
                         
                         # Display key metrics
                         st.header(f"📈 {metric_model} Performance")
