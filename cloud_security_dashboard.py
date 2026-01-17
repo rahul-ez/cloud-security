@@ -43,6 +43,17 @@ try:
             padding: 1rem;
             border-radius: 0.5rem;
             margin: 0.5rem 0;
+            border: 1px solid #ddd;
+        }
+        .metric-card h4 {
+            color: #1f77b4;
+            margin-top: 0;
+            margin-bottom: 0.5rem;
+        }
+        .metric-card p {
+            color: #333;
+            margin: 0.25rem 0;
+            font-size: 0.9rem;
         }
         h1 {
             color: #1f77b4;
@@ -102,7 +113,9 @@ def load_models():
             'xgb': 'xgb.joblib',
             'if': 'if.joblib',
             'scaler': 'if_scaler.joblib',
-            'preprocessor': 'preprocessor_rf.joblib'
+            'preprocessor': 'preprocessor_rf.joblib',
+            'ae': 'ae_model.h5',
+            'scaler_ae': 'scaler_ae.joblib'
         }
         
         # Load each model with detailed error handling
@@ -116,15 +129,70 @@ def load_models():
                 continue
             
             try:
-                # Try joblib first, then pickle
-                try:
-                    import joblib
-                    models[key] = joblib.load(filepath)
-                except ImportError:
-                    st.warning("joblib not available, trying pickle")
-                    with open(filepath, 'rb') as f:
-                        models[key] = pickle.load(f)
-                st.success(f"✅ Loaded {filename}", icon="✅")
+                # Handle H5 files (Keras models) separately
+                if filename.endswith('.h5'):
+                    ae_loaded = False
+                    # Try TensorFlow first
+                    try:
+                        import tensorflow as tf
+                        try:
+                            # Try loading normally first
+                            models[key] = tf.keras.models.load_model(filepath)
+                            ae_loaded = True
+                        except Exception as load_error:
+                            # If normal load fails, try with compile=False
+                            try:
+                                st.warning(f"⚠️ Normal load failed, trying with compile=False...")
+                                models[key] = tf.keras.models.load_model(filepath, compile=False)
+                                ae_loaded = True
+                            except Exception as compile_false_error:
+                                # If still fails, try with custom_objects
+                                try:
+                                    st.warning(f"⚠️ Still failing, trying with safe mode...")
+                                    models[key] = tf.keras.models.load_model(filepath, compile=False, safe_mode=False)
+                                    ae_loaded = True
+                                except Exception as custom_error:
+                                    raise compile_false_error
+                    except ImportError as ie:
+                        st.warning(f"⚠️ TensorFlow not installed. Install with: pip install tensorflow")
+                        st.info(f"Attempting Keras standalone...")
+                        try:
+                            import keras
+                            from keras.models import load_model
+                            try:
+                                models[key] = load_model(filepath)
+                                ae_loaded = True
+                            except Exception:
+                                # Try with compile=False for Keras too
+                                try:
+                                    models[key] = load_model(filepath, compile=False)
+                                    ae_loaded = True
+                                except Exception as keras_error:
+                                    st.error(f"❌ Failed to load H5 with Keras: {str(keras_error)}")
+                                    models[key] = None
+                        except ImportError as ie2:
+                            st.error(f"❌ Keras not installed. Install with: pip install keras")
+                            models[key] = None
+                    except Exception as e:
+                        st.error(f"❌ Could not load H5 file: {str(e)}")
+                        st.info("This may be due to:")
+                        st.info("1. Version mismatch between Keras/TensorFlow used to save and current installation")
+                        st.info("2. Try upgrading: pip install --upgrade tensorflow keras")
+                        st.info("3. Or downgrade to match the original versions")
+                        models[key] = None
+                    
+                    if ae_loaded:
+                        st.success(f"✅ Loaded {filename}", icon="✅")
+                else:
+                    # Try joblib first, then pickle
+                    try:
+                        import joblib
+                        models[key] = joblib.load(filepath)
+                    except ImportError:
+                        st.warning("joblib not available, trying pickle")
+                        with open(filepath, 'rb') as f:
+                            models[key] = pickle.load(f)
+                    st.success(f"✅ Loaded {filename}", icon="✅")
             except Exception as e:
                 st.error(f"❌ Error loading {filename}: {str(e)}")
                 models[key] = None
@@ -144,7 +212,7 @@ def load_models():
 
 try:
     # Sidebar navigation
-    st.sidebar.title("🛡️ Navigation")
+    st.sidebar.title("Navigation")
     page = st.sidebar.radio(
         "Select Page",
         ["Home", "Dataset", "Model Predictions", "Ensemble Anomaly Score", 
@@ -159,6 +227,7 @@ try:
         - Random Forest Classifier
         - XGBoost Classifier  
         - Isolation Forest
+        - Autoencoder
     """)
 except Exception as e:
     st.error(f"Error setting up sidebar: {e}")
@@ -169,12 +238,12 @@ except Exception as e:
 # ============================================================================
 if page == "Home":
     try:
-        st.title("🛡️ Cloud Security Monitoring Dashboard")
+        st.title("Cloud Security Monitoring Dashboard")
         st.markdown("### Real-time threat detection and analysis system")
         
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Active Models", "3", "RF, XGB, IF")
+            st.metric("Active Models", "4", "RF, XGB, IF, AE")
         with col2:
             st.metric("Detection Methods", "Supervised & Unsupervised")
         with col3:
@@ -183,7 +252,7 @@ if page == "Home":
         st.markdown("---")
         
         # System Description
-        st.header("📋 System Description")
+        st.header("System Description")
         st.markdown("""
         This dashboard provides comprehensive cloud security monitoring capabilities for administrators to:
         
@@ -200,7 +269,7 @@ if page == "Home":
         st.markdown("---")
         
         # Pipeline Diagram
-        st.header("🔄 Detection Pipeline")
+        st.header("Detection Pipeline")
         
         # Create a visual pipeline using columns
         col1, col2, col3, col4, col5 = st.columns(5)
@@ -208,7 +277,7 @@ if page == "Home":
         with col1:
             st.markdown("""
             <div class="metric-card">
-            <h4>📊 Data Ingestion</h4>
+            <h4>Data Ingestion</h4>
             <p>Upload CSV logs</p>
             <p>Feature extraction</p>
             </div>
@@ -217,7 +286,7 @@ if page == "Home":
         with col2:
             st.markdown("""
             <div class="metric-card">
-            <h4>⚙️ Preprocessing</h4>
+            <h4>Preprocessing</h4>
             <p>Scaling</p>
             <p>Encoding</p>
             <p>Normalization</p>
@@ -227,7 +296,7 @@ if page == "Home":
         with col3:
             st.markdown("""
             <div class="metric-card">
-            <h4>🤖 Model Inference</h4>
+            <h4>Model Inference</h4>
             <p>Random Forest</p>
             <p>XGBoost</p>
             <p>Isolation Forest</p>
@@ -237,7 +306,7 @@ if page == "Home":
         with col4:
             st.markdown("""
             <div class="metric-card">
-            <h4>📈 Ensemble Scoring</h4>
+            <h4>Ensemble Scoring</h4>
             <p>Weighted combination</p>
             <p>Threshold analysis</p>
             </div>
@@ -246,7 +315,7 @@ if page == "Home":
         with col5:
             st.markdown("""
             <div class="metric-card">
-            <h4>🎯 Alert & Action</h4>
+            <h4>Alert & Action</h4>
             <p>Risk classification</p>
             <p>Recommended actions</p>
             </div>
@@ -255,12 +324,12 @@ if page == "Home":
         st.markdown("---")
         
         # Key Features
-        st.header("✨ Key Features")
+        st.header("Key Features")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            st.subheader("🔍 Detection Capabilities")
+            st.subheader("Detection Capabilities")
             st.markdown("""
             - Multi-model ensemble approach
             - Known attack pattern recognition
@@ -269,7 +338,7 @@ if page == "Home":
             - Real-time risk scoring
             """)
             
-            st.subheader("📊 Analysis Tools")
+            st.subheader("Analysis Tools")
             st.markdown("""
             - Interactive data visualization
             - Statistical insights
@@ -278,7 +347,7 @@ if page == "Home":
             """)
         
         with col2:
-            st.subheader("🧠 Explainability")
+            st.subheader("Explainability")
             st.markdown("""
             - SHAP value analysis
             - Feature importance ranking
@@ -286,7 +355,7 @@ if page == "Home":
             - Model decision transparency
             """)
             
-            st.subheader("⚡ Actions")
+            st.subheader("Actions")
             st.markdown("""
             - Automated alert generation
             - Session isolation recommendations
@@ -302,10 +371,10 @@ if page == "Home":
 # ============================================================================
 elif page == "Dataset":
     try:
-        st.title("📊 Dataset Management")
+        st.title("Dataset Management")
         
         # File uploader
-        st.header("📁 Upload Dataset")
+        st.header("Upload Dataset")
         uploaded_file = st.file_uploader(
             "Upload your cloud security logs (CSV format)",
             type=['csv'],
@@ -320,11 +389,11 @@ elif page == "Dataset":
                 st.success(f"✅ Dataset loaded successfully! Shape: {df.shape}")
                 
                 # Dataset preview
-                st.header("👀 Dataset Preview")
+                st.header("Dataset Preview")
                 st.dataframe(df.head(100), use_container_width=True)
                 
                 # Dataset Statistics
-                st.header("📈 Dataset Statistics")
+                st.header("Dataset Statistics")
                 
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
@@ -352,7 +421,7 @@ elif page == "Dataset":
                 st.dataframe(df.describe(), use_container_width=True)
                 
                 # Visualizations
-                st.header("📊 Data Visualizations")
+                st.header("Data Visualizations")
                 
                 # Select numeric columns for visualization
                 numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
@@ -412,7 +481,7 @@ elif page == "Dataset":
                         st.plotly_chart(fig, use_container_width=True)
                 
                 # Download processed data
-                st.header("💾 Export Data")
+                st.header("Export Data")
                 csv = df.to_csv(index=False)
                 st.download_button(
                     label="Download Dataset as CSV",
@@ -424,10 +493,10 @@ elif page == "Dataset":
             except Exception as e:
                 st.error(f"Error loading dataset: {str(e)}")
         else:
-            st.info("👆 Please upload a dataset to begin analysis")
+            st.info("Please upload a dataset to begin analysis")
             
             # Sample data format
-            st.header("📋 Expected Data Format")
+            st.header("Expected Data Format")
             st.markdown("""
             Your dataset should contain authentication and session log features such as:
             - **Session identifiers** (session_id)
@@ -444,7 +513,7 @@ elif page == "Dataset":
 # PAGE 3: MODEL PREDICTIONS
 # ============================================================================
 elif page == "Model Predictions":
-    st.title("🤖 Model Predictions")
+    st.title("Model Predictions")
     
     if st.session_state.data is None:
         st.warning("⚠️ Please upload a dataset first in the Dataset page")
@@ -452,14 +521,14 @@ elif page == "Model Predictions":
         df = st.session_state.data.copy()
         
         # Model selection
-        st.header("🎯 Select Model")
+        st.header("Select Model")
         model_choice = st.selectbox(
             "Choose a model for prediction",
-            ["Random Forest", "XGBoost", "Isolation Forest", "All Models"]
+            ["Random Forest", "XGBoost", "Isolation Forest", "Autoencoder", "All Models"]
         )
         
         # Preprocessing options
-        with st.expander("⚙️ Preprocessing Options"):
+        with st.expander("Preprocessing Options"):
             col1, col2 = st.columns(2)
             with col1:
                 handle_missing = st.checkbox("Handle missing values", value=True)
@@ -467,6 +536,16 @@ elif page == "Model Predictions":
             with col2:
                 encode_categorical = st.checkbox("Encode categorical features", value=True)
                 feature_selection = st.checkbox("Use feature selection", value=False)
+        
+        # Threshold adjustment options
+        with st.expander("Threshold Adjustment"):
+            col1, col2 = st.columns(2)
+            with col1:
+                if_percentile = st.slider("IF Contamination Percentile", 1, 50, 23, 1, 
+                                         help="Higher = more anomalies detected")
+            with col2:
+                ae_percentile = st.slider("AE Error Percentile", 1, 50, 23, 1,
+                                         help="Higher = more anomalies detected")
         
         # Run predictions
         if st.button("🚀 Run Predictions", type="primary"):
@@ -514,6 +593,21 @@ elif page == "Model Predictions":
                         st.warning("⚠️ IF Scaler not loaded. Using raw features for Isolation Forest.")
                         X_scaled = X_numerical.values
                     
+                    # For Autoencoder: Use numerical features with AE scaler
+                    X_ae = processed_df[numerical_features].fillna(0)
+                    
+                    # Check if AE scaler is available
+                    if models['scaler_ae'] is not None:
+                        try:
+                            X_ae_scaled = models['scaler_ae'].transform(X_ae)  # Scaled features for AE
+                        except Exception as scaler_error:
+                            st.warning(f"⚠️ Error scaling features with AE scaler: {str(scaler_error)}")
+                            st.warning("Using raw features for Autoencoder")
+                            X_ae_scaled = X_ae.values
+                    else:
+                        st.warning("⚠️ AE Scaler not loaded. Using raw features for Autoencoder.")
+                        X_ae_scaled = X_ae.values
+                    
                     # Try to get RF predictions
                     rf_pred = None
                     rf_proba = None
@@ -531,8 +625,10 @@ elif page == "Model Predictions":
                     if_score = None
                     if models['if'] is not None:
                         try:
-                            if_pred = models['if'].predict(X_scaled)
                             if_score = models['if'].score_samples(X_scaled)
+                            # Use adjustable percentile threshold instead of model's built-in anomaly scores
+                            if_threshold = np.percentile(if_score, if_percentile)
+                            if_pred = np.where(if_score < if_threshold, -1, 1)  # -1 = anomaly, 1 = normal
                         except Exception as e:
                             st.warning(f"⚠️ Isolation Forest prediction failed: {str(e)}")
                             if_pred = None
@@ -545,7 +641,7 @@ elif page == "Model Predictions":
                     # RANDOM FOREST PREDICTIONS
                     # ===================================================================
                     if model_choice == "Random Forest" or model_choice == "All Models":
-                        st.subheader("🌳 Random Forest Classifier")
+                        st.subheader("Random Forest Classifier")
                         
                         if rf_pred is None:
                             st.error("❌ Random Forest model not available or failed to predict.")
@@ -583,118 +679,203 @@ elif page == "Model Predictions":
                                 
                             except Exception as e:
                                 st.error(f"Error with Random Forest: {str(e)}")
+                    
+                    # ===================================================================
+                    # XGBOOST PREDICTIONS
+                    # ===================================================================
+                    if model_choice == "XGBoost" or model_choice == "All Models":
+                        st.subheader("XGBoost Classifier")
                         
-                        # ===================================================================
-                        # XGBOOST PREDICTIONS
-                        # ===================================================================
-                        if model_choice == "XGBoost" or model_choice == "All Models":
-                            st.subheader("⚡ XGBoost Classifier")
+                        try:
+                            xgb_pred = models['xgb'].predict(X_processed)
+                            xgb_proba = models['xgb'].predict_proba(X_processed)[:, 1]
                             
+                            st.session_state.predictions['xgb'] = {
+                                'predictions': xgb_pred,
+                                'probabilities': xgb_proba
+                            }
+                            
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                anomalies = (xgb_pred == 1).sum()
+                                st.metric("Anomalies Detected", f"{anomalies:,}")
+                            with col2:
+                                normal = (xgb_pred == 0).sum()
+                                st.metric("Normal Records", f"{normal:,}")
+                            with col3:
+                                pct = (anomalies / len(xgb_pred)) * 100
+                                st.metric("Anomaly Rate", f"{pct:.2f}%")
+                            
+                            xgb_results = pd.DataFrame({
+                                'Prediction': xgb_pred,
+                                'Anomaly Probability': xgb_proba
+                            })
+                            
+                            fig = px.histogram(xgb_results, x='Anomaly Probability',
+                                             color='Prediction',
+                                             nbins=50,
+                                             title="XGBoost Prediction Distribution",
+                                             labels={'Prediction': 'Class'},
+                                             color_discrete_map={0: '#00C851', 1: '#ff4444'})
+                            st.plotly_chart(fig, use_container_width=True)
+                            
+                        except Exception as e:
+                            st.error(f"Error with XGBoost: {str(e)}")
+                    
+                    # ===================================================================
+                    # ISOLATION FOREST PREDICTIONS
+                    # ===================================================================
+                    if model_choice == "Isolation Forest" or model_choice == "All Models":
+                        st.subheader("Isolation Forest")
+                        
+                        if if_pred is None:
+                            st.error("❌ Isolation Forest model not available or failed to predict.")
+                        else:
                             try:
-                                xgb_pred = models['xgb'].predict(X_processed)
-                                xgb_proba = models['xgb'].predict_proba(X_processed)[:, 1]
-                                
-                                st.session_state.predictions['xgb'] = {
-                                    'predictions': xgb_pred,
-                                    'probabilities': xgb_proba
+                                st.session_state.predictions['if'] = {
+                                    'predictions': if_pred,
+                                    'scores': if_score
                                 }
                                 
                                 col1, col2, col3 = st.columns(3)
                                 with col1:
-                                    anomalies = (xgb_pred == 1).sum()
+                                    anomalies = (if_pred == -1).sum()
                                     st.metric("Anomalies Detected", f"{anomalies:,}")
                                 with col2:
-                                    normal = (xgb_pred == 0).sum()
+                                    normal = (if_pred == 1).sum()
                                     st.metric("Normal Records", f"{normal:,}")
                                 with col3:
-                                    pct = (anomalies / len(xgb_pred)) * 100
+                                    pct = (anomalies / len(if_pred)) * 100
                                     st.metric("Anomaly Rate", f"{pct:.2f}%")
                                 
-                                xgb_results = pd.DataFrame({
-                                    'Prediction': xgb_pred,
-                                    'Anomaly Probability': xgb_proba
+                                if_results = pd.DataFrame({
+                                    'Prediction': ['Anomaly' if x == -1 else 'Normal' for x in if_pred],
+                                    'Anomaly Score': if_score
                                 })
                                 
-                                fig = px.histogram(xgb_results, x='Anomaly Probability',
+                                fig = px.histogram(if_results, x='Anomaly Score',
                                                  color='Prediction',
                                                  nbins=50,
-                                                 title="XGBoost Prediction Distribution",
-                                                 labels={'Prediction': 'Class'},
-                                                 color_discrete_map={0: '#00C851', 1: '#ff4444'})
+                                                 title="Isolation Forest Anomaly Score Distribution",
+                                                 color_discrete_map={'Normal': '#00C851', 'Anomaly': '#ff4444'})
                                 st.plotly_chart(fig, use_container_width=True)
                                 
+                                st.info("Note: Isolation Forest scores are negative. More negative = more anomalous")
+                                
                             except Exception as e:
-                                st.error(f"Error with XGBoost: {str(e)}")
-                        
-                        # ===================================================================
-                        # ISOLATION FOREST PREDICTIONS
-                        # ===================================================================
-                        if model_choice == "Isolation Forest" or model_choice == "All Models":
-                            st.subheader("🌲 Isolation Forest")
+                                st.error(f"Error with Isolation Forest: {str(e)}")
+                    
+                    # ===================================================================
+                    # AUTOENCODER PREDICTIONS
+                    # ===================================================================
+                    if model_choice == "Autoencoder" or model_choice == "All Models":
+                            st.subheader("Autoencoder")
                             
-                            if if_pred is None:
-                                st.error("❌ Isolation Forest model not available or failed to predict.")
+                            if models['ae'] is None:
+                                st.error("❌ Autoencoder model not available. Please install TensorFlow/Keras: pip install tensorflow keras")
                             else:
                                 try:
-                                    st.session_state.predictions['if'] = {
-                                        'predictions': if_pred,
-                                        'scores': if_score
+                                    import numpy as np
+                                    
+                                    # Get predictions (reconstruction)
+                                    try:
+                                        # Try with verbose=0 first (TensorFlow models)
+                                        try:
+                                            ae_reconstruction = models['ae'].predict(X_ae_scaled, verbose=0)
+                                        except TypeError:
+                                            # If verbose not supported, try without it
+                                            ae_reconstruction = models['ae'].predict(X_ae_scaled)
+                                    except Exception as pred_error:
+                                        st.error(f"❌ Error during autoencoder prediction: {str(pred_error)}")
+                                        st.info("Possible issues:")
+                                        st.info("1. Model input shape mismatch - check X_ae_scaled dimensions")
+                                        st.info("2. Model was saved with incompatible version")
+                                        raise
+                                    
+                                    # Calculate reconstruction error (MSE)
+                                    try:
+                                        ae_error = np.mean(np.power(X_ae_scaled - ae_reconstruction, 2), axis=1)
+                                    except Exception as error_calc:
+                                        st.error(f"❌ Error calculating reconstruction error: {str(error_calc)}")
+                                        raise
+                                    
+                                    # Define threshold for anomaly (using adjustable percentile)
+                                    try:
+                                        threshold = np.percentile(ae_error, 100 - ae_percentile)
+                                        ae_pred = np.where(ae_error > threshold, 1, 0)  # 1 = anomaly, 0 = normal
+                                    except Exception as threshold_error:
+                                        st.error(f"❌ Error calculating threshold: {str(threshold_error)}")
+                                        raise
+                                    
+                                    st.session_state.predictions['ae'] = {
+                                        'predictions': ae_pred,
+                                        'errors': ae_error,
+                                        'threshold': threshold
                                     }
                                     
                                     col1, col2, col3 = st.columns(3)
                                     with col1:
-                                        anomalies = (if_pred == -1).sum()
+                                        anomalies = (ae_pred == 1).sum()
                                         st.metric("Anomalies Detected", f"{anomalies:,}")
                                     with col2:
-                                        normal = (if_pred == 1).sum()
+                                        normal = (ae_pred == 0).sum()
                                         st.metric("Normal Records", f"{normal:,}")
                                     with col3:
-                                        pct = (anomalies / len(if_pred)) * 100
+                                        pct = (anomalies / len(ae_pred)) * 100
                                         st.metric("Anomaly Rate", f"{pct:.2f}%")
                                     
-                                    if_results = pd.DataFrame({
-                                        'Prediction': ['Anomaly' if x == -1 else 'Normal' for x in if_pred],
-                                        'Anomaly Score': if_score
+                                    ae_results = pd.DataFrame({
+                                        'Prediction': ['Anomaly' if x == 1 else 'Normal' for x in ae_pred],
+                                        'Reconstruction Error': ae_error
                                     })
                                     
-                                    fig = px.histogram(if_results, x='Anomaly Score',
+                                    fig = px.histogram(ae_results, x='Reconstruction Error',
                                                      color='Prediction',
                                                      nbins=50,
-                                                     title="Isolation Forest Anomaly Score Distribution",
+                                                     title="Autoencoder Reconstruction Error Distribution",
                                                      color_discrete_map={'Normal': '#00C851', 'Anomaly': '#ff4444'})
                                     st.plotly_chart(fig, use_container_width=True)
                                     
-                                    st.info("Note: Isolation Forest scores are negative. More negative = more anomalous")
+                                    st.info(f"Note: Anomaly threshold (95th percentile) = {threshold:.4f}")
                                     
                                 except Exception as e:
-                                    st.error(f"Error with Isolation Forest: {str(e)}")
-                        
-                        st.success("✅ Predictions completed successfully!")
-                        
-                        # Detailed results table
-                        st.header("📋 Detailed Results")
-                        results_df = df.copy()
-                        
-                        if 'rf' in st.session_state.predictions:
-                            results_df['RF_Prediction'] = st.session_state.predictions['rf']['predictions']
-                            results_df['RF_Probability'] = st.session_state.predictions['rf']['probabilities']
-                        if 'xgb' in st.session_state.predictions:
-                            results_df['XGB_Prediction'] = st.session_state.predictions['xgb']['predictions']
-                            results_df['XGB_Probability'] = st.session_state.predictions['xgb']['probabilities']
-                        if 'if' in st.session_state.predictions:
-                            results_df['IF_Prediction'] = st.session_state.predictions['if']['predictions']
-                            results_df['IF_Score'] = st.session_state.predictions['if']['scores']
-                        
-                        st.dataframe(results_df.head(100), use_container_width=True)
-                        
-                        # Download predictions
-                        csv = results_df.to_csv(index=False)
-                        st.download_button(
-                            label="💾 Download Predictions",
-                            data=csv,
-                            file_name="model_predictions.csv",
-                            mime="text/csv"
-                        )
+                                    st.error(f"❌ Error with Autoencoder: {str(e)}")
+                                    st.warning("Common causes:")
+                                    st.warning("1. TensorFlow/Keras not installed: pip install tensorflow keras")
+                                    st.warning("2. Model file corrupted or incompatible")
+                                    st.warning("3. Input data shape mismatch")
+                                    import traceback
+                                    st.code(traceback.format_exc())
+                    
+                    st.success("✅ Predictions completed successfully!")
+                    
+                    # Detailed results table
+                    st.header("Detailed Results")
+                    results_df = df.copy()
+                    
+                    if 'rf' in st.session_state.predictions:
+                        results_df['RF_Prediction'] = st.session_state.predictions['rf']['predictions']
+                        results_df['RF_Probability'] = st.session_state.predictions['rf']['probabilities']
+                    if 'xgb' in st.session_state.predictions:
+                        results_df['XGB_Prediction'] = st.session_state.predictions['xgb']['predictions']
+                        results_df['XGB_Probability'] = st.session_state.predictions['xgb']['probabilities']
+                    if 'if' in st.session_state.predictions:
+                        results_df['IF_Prediction'] = st.session_state.predictions['if']['predictions']
+                        results_df['IF_Score'] = st.session_state.predictions['if']['scores']
+                    if 'ae' in st.session_state.predictions:
+                        results_df['AE_Prediction'] = st.session_state.predictions['ae']['predictions']
+                        results_df['AE_Error'] = st.session_state.predictions['ae']['errors']
+                    
+                    st.dataframe(results_df.head(100), use_container_width=True)
+                    
+                    # Download predictions
+                    csv = results_df.to_csv(index=False)
+                    st.download_button(
+                        label="💾 Download Predictions",
+                        data=csv,
+                        file_name="model_predictions.csv",
+                        mime="text/csv"
+                    )
                         
                 except Exception as e:
                     st.error(f"Error during prediction: {str(e)}")
@@ -705,34 +886,37 @@ elif page == "Model Predictions":
 # ============================================================================
 elif page == "Ensemble Anomaly Score":
     try:
-        st.title("🎯 Ensemble Anomaly Score")
+        st.title("Ensemble Anomaly Score")
         
         if not st.session_state.predictions:
             st.warning("⚠️ Please run model predictions first in the Model Predictions page")
         else:
-            st.header("⚙️ Ensemble Configuration")
+            st.header("Ensemble Configuration")
             
             # Weight sliders
             st.subheader("Model Weights")
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3, col4 = st.columns(4)
             
             with col1:
-                w_rf = st.slider("Random Forest Weight", 0.0, 1.0, 0.4, 0.05)
+                w_rf = st.slider("Random Forest Weight", 0.0, 1.0, 0.3, 0.05)
             with col2:
-                w_xgb = st.slider("XGBoost Weight", 0.0, 1.0, 0.4, 0.05)
+                w_xgb = st.slider("XGBoost Weight", 0.0, 1.0, 0.3, 0.05)
             with col3:
                 w_if = st.slider("Isolation Forest Weight", 0.0, 1.0, 0.2, 0.05)
+            with col4:
+                w_ae = st.slider("Autoencoder Weight", 0.0, 1.0, 0.2, 0.05)
             
             # Normalize weights
-            total_weight = w_rf + w_xgb + w_if
+            total_weight = w_rf + w_xgb + w_if + w_ae
             if total_weight > 0:
                 w_rf_norm = w_rf / total_weight
                 w_xgb_norm = w_xgb / total_weight
                 w_if_norm = w_if / total_weight
+                w_ae_norm = w_ae / total_weight
             else:
-                w_rf_norm = w_xgb_norm = w_if_norm = 1/3
+                w_rf_norm = w_xgb_norm = w_if_norm = w_ae_norm = 0.25
             
-            st.info(f"Normalized weights: RF={w_rf_norm:.3f}, XGB={w_xgb_norm:.3f}, IF={w_if_norm:.3f}")
+            st.info(f"Normalized weights: RF={w_rf_norm:.3f}, XGB={w_xgb_norm:.3f}, IF={w_if_norm:.3f}, AE={w_ae_norm:.3f}")
             
             # Alert threshold
             st.subheader("Alert Threshold")
@@ -758,9 +942,26 @@ elif page == "Ensemble Anomaly Score":
                             if_normalized = (if_scores - if_scores.min()) / (if_scores.max() - if_scores.min() + 1e-8)
                             scores.append(w_if_norm * if_normalized)
                         
+                        if 'ae' in st.session_state.predictions:
+                            # Normalize AE errors to [0, 1]
+                            try:
+                                ae_errors = st.session_state.predictions['ae']['errors']
+                                ae_min = ae_errors.min()
+                                ae_max = ae_errors.max()
+                                ae_normalized = (ae_errors - ae_min) / (ae_max - ae_min + 1e-8)
+                                scores.append(w_ae_norm * ae_normalized)
+                            except Exception as ae_norm_error:
+                                st.warning(f"⚠️ Error normalizing Autoencoder scores: {str(ae_norm_error)}")
+                                st.warning("Autoencoder will be skipped from ensemble")
+                        
                         # Calculate ensemble score
-                        ensemble_score = np.sum(scores, axis=0)
-                        ensemble_pred = (ensemble_score >= threshold).astype(int)
+                        try:
+                            ensemble_score = np.sum(scores, axis=0)
+                            ensemble_pred = (ensemble_score >= threshold).astype(int)
+                        except Exception as ensemble_error:
+                            st.error(f"❌ Error calculating ensemble score: {str(ensemble_error)}")
+                            st.error("Ensure at least one model has predictions")
+                            raise
                         
                         st.session_state.predictions['ensemble'] = {
                             'scores': ensemble_score,
@@ -771,7 +972,7 @@ elif page == "Ensemble Anomaly Score":
                         st.success("✅ Ensemble scores calculated successfully!")
                         
                         # Display results
-                        st.header("📊 Ensemble Results")
+                        st.header("Ensemble Results")
                         
                         col1, col2, col3, col4 = st.columns(4)
                         with col1:
@@ -878,7 +1079,7 @@ elif page == "Ensemble Anomaly Score":
 # ============================================================================
 elif page == "Performance Metrics":
     try:
-        st.title("📊 Performance Metrics")
+        st.title("Performance Metrics")
         
         if st.session_state.data is None:
             st.warning("⚠️ Please upload a dataset first")
@@ -894,14 +1095,14 @@ elif page == "Performance Metrics":
                 st.info("✅ Dataset contains labels. Using actual ground truth for evaluation.")
             
             # Model selection for metrics
-            st.header("🎯 Select Model for Evaluation")
+            st.header("Select Model for Evaluation")
             metric_model = st.selectbox(
                 "Choose model",
                 ["Random Forest", "XGBoost", "Ensemble"]
             )
             
             # Toggle for seen vs unseen attacks
-            st.header("⚙️ Evaluation Settings")
+            st.header("Evaluation Settings")
             col1, col2 = st.columns(2)
             with col1:
                 attack_type = st.radio(
@@ -911,7 +1112,7 @@ elif page == "Performance Metrics":
             with col2:
                 show_detailed = st.checkbox("Show detailed metrics", value=True)
             
-            if st.button("📊 Generate Performance Metrics", type="primary"):
+            if st.button("Generate Performance Metrics", type="primary"):
                 with st.spinner("Calculating performance metrics..."):
                     try:
                         # Load models first
@@ -1013,7 +1214,7 @@ elif page == "Performance Metrics":
                         f1 = f1_score(y_true, y_pred, zero_division=0)
                         
                         # Display key metrics
-                        st.header(f"📈 {metric_model} Performance")
+                        st.header(f"{metric_model} Performance")
                         
                         col1, col2, col3, col4 = st.columns(4)
                         with col1:
@@ -1048,7 +1249,7 @@ elif page == "Performance Metrics":
                         st.plotly_chart(fig, use_container_width=True)
                         
                         # ROC Curve
-                        st.subheader("📈 ROC Curve")
+                        st.subheader("ROC Curve")
                         fpr, tpr, thresholds = roc_curve(y_true, y_proba)
                         roc_auc = auc(fpr, tpr)
                         
@@ -1076,7 +1277,7 @@ elif page == "Performance Metrics":
                         st.plotly_chart(fig, use_container_width=True)
                         
                         # Precision-Recall Curve
-                        st.subheader("📊 Precision-Recall Curve")
+                        st.subheader("Precision-Recall Curve")
                         precision_vals, recall_vals, pr_thresholds = precision_recall_curve(y_true, y_proba)
                         
                         fig = go.Figure()
@@ -1097,7 +1298,7 @@ elif page == "Performance Metrics":
                         
                         if show_detailed:
                             # Classification Report
-                            st.subheader("📋 Detailed Classification Report")
+                            st.subheader("Detailed Classification Report")
                             report = classification_report(y_true, y_pred, 
                                                           target_names=['Normal', 'Anomaly'],
                                                           output_dict=True)
@@ -1105,7 +1306,7 @@ elif page == "Performance Metrics":
                             st.dataframe(report_df, use_container_width=True)
                             
                             # Threshold Analysis
-                            st.subheader("🎚️ Threshold Analysis")
+                            st.subheader("Threshold Analysis")
                             
                             threshold_metrics = []
                             for thresh in np.arange(0.1, 1.0, 0.1):
@@ -1197,27 +1398,27 @@ elif page == "Performance Metrics":
 # ============================================================================
 elif page == "Feature Explainability":
     try:
-        st.title("🧠 Feature Explainability")
+        st.title("Feature Explainability")
         
         if st.session_state.data is None:
-            st.warning("⚠️ Please upload a dataset first")
+            st.warning(" Please upload a dataset first")
         else:
             df = st.session_state.data
             
-            st.header("🎯 Model Selection")
+            st.header("Model Selection")
             explain_model = st.selectbox(
                 "Choose model for explanation",
                 ["Random Forest", "XGBoost", "Both"]
             )
             
-            st.header("⚙️ Explanation Settings")
+            st.header("Explanation Settings")
             col1, col2 = st.columns(2)
             with col1:
                 num_samples = st.slider("Number of samples to explain", 10, 200, 100)
             with col2:
                 show_individual = st.checkbox("Show individual predictions", value=True)
             
-            if st.button("🔍 Generate SHAP Explanations", type="primary"):
+            if st.button("Generate SHAP Explanations", type="primary"):
                 with st.spinner("Generating SHAP explanations... This may take a minute."):
                     try:
                         # Load models
@@ -1280,7 +1481,7 @@ elif page == "Feature Explainability":
                         # ===================================================================
                         # 1. GLOBAL FEATURE IMPORTANCE
                         # ===================================================================
-                        st.header("📊 Global Feature Importance")
+                        st.header("Global Feature Importance")
                         st.markdown("Based on mean absolute SHAP values across all samples")
                         
                         # Calculate mean absolute SHAP values
@@ -1591,10 +1792,10 @@ elif page == "Feature Explainability":
 # ============================================================================
 elif page == "Actions":
     try:
-        st.title("⚡ Recommended Actions")
+        st.title("Recommended Actions")
         
         if st.session_state.data is None or not st.session_state.predictions:
-            st.warning("⚠️ Please upload data and run predictions first")
+            st.warning("Please upload data and run predictions first")
         else:
             df = st.session_state.data.copy()
             
@@ -1610,9 +1811,9 @@ elif page == "Actions":
             alerts_df = df[df['Alert'] == 1].copy()
             
             if len(alerts_df) == 0:
-                st.success("🎉 No alerts detected! System is operating normally.")
+                st.success("No alerts detected! System is operating normally.")
             else:
-                st.header(f"🚨 {len(alerts_df)} Alerts Detected")
+                st.header(f"{len(alerts_df)} Alerts Detected")
                 
                 # Summary statistics
                 col1, col2, col3, col4 = st.columns(4)
@@ -1629,7 +1830,7 @@ elif page == "Actions":
                     st.metric("⏱️ Avg Response Time", "2.3 min")
                 
                 # Alert prioritization
-                st.header("📋 Alert Prioritization")
+                st.header("Alert Prioritization")
                 
                 # Add risk level
                 alerts_df['Risk_Level'] = pd.cut(
@@ -1658,7 +1859,7 @@ elif page == "Actions":
                 )
                 
                 # Select session for action
-                st.header("🎯 Select Session for Action")
+                st.header("Select Session for Action")
                 
                 selected_session = st.selectbox(
                     "Choose a session to investigate",
@@ -1672,7 +1873,7 @@ elif page == "Actions":
                     col1, col2 = st.columns([2, 1])
                     
                     with col1:
-                        st.subheader(f"📊 Session {selected_session} Details")
+                        st.subheader(f"Session {selected_session} Details")
                         
                         # Session metrics
                         metric_cols = st.columns(4)
@@ -1697,7 +1898,7 @@ elif page == "Actions":
                         st.dataframe(info_df, use_container_width=True)
                     
                     with col2:
-                        st.subheader("⚠️ Risk Indicator")
+                        st.subheader("Risk Indicator")
                         
                         # Gauge chart for risk
                         score = session_data['Ensemble_Score']
@@ -1726,7 +1927,7 @@ elif page == "Actions":
                         st.plotly_chart(fig, use_container_width=True)
                     
                     # Recommended Actions
-                    st.header("✅ Recommended Actions")
+                    st.header("Recommended Actions")
                     
                     risk_level = session_data['Risk_Level']
                     
@@ -1768,22 +1969,22 @@ elif page == "Actions":
                         st.markdown(f"{i}. {action}")
                     
                     # Action buttons
-                    st.header("🎬 Execute Actions")
+                    st.header("Execute Actions")
                     
                     col1, col2, col3 = st.columns(3)
                     
                     with col1:
-                        if st.button("🚫 Block Session", type="primary"):
+                        if st.button("Block Session", type="primary"):
                             st.success(f"✅ Session {selected_session} has been blocked")
                             st.info("All active connections terminated")
                     
                     with col2:
-                        if st.button("📧 Alert Security Team"):
+                        if st.button("Alert Security Team"):
                             st.success("✅ Security team has been notified")
                             st.info("Incident ticket #" + str(np.random.randint(10000, 99999)) + " created")
                     
                     with col3:
-                        if st.button("📝 Generate Report"):
+                        if st.button("Generate Report"):
                             st.success("✅ Incident report generated")
                             
                             # Create downloadable report
@@ -1804,7 +2005,7 @@ elif page == "Actions":
                             )
                     
                     # Investigation Timeline
-                    st.header("⏱️ Suggested Investigation Timeline")
+                    st.header("Suggested Investigation Timeline")
                     
                     timeline_data = pd.DataFrame({
                         'Time': ['0-5 min', '5-15 min', '15-30 min', '30-60 min', '1-24 hrs', '24-48 hrs'],
@@ -1820,27 +2021,6 @@ elif page == "Actions":
                     })
                     
                     st.dataframe(timeline_data, use_container_width=True)
-                    
-                    # Additional Resources
-                    st.header("📚 Additional Resources")
-                    
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.markdown("""
-                        **Playbooks:**
-                        - [Brute Force Attack Response](javascript:void(0))
-                        - [Data Exfiltration Protocol](javascript:void(0))
-                        - [Insider Threat Handling](javascript:void(0))
-                        """)
-                    
-                    with col2:
-                        st.markdown("""
-                        **Escalation:**
-                        - Security Operations: ext. 5555
-                        - Incident Response: ext. 5556
-                        - Management: ext. 5557
-                        """)
     except Exception as e:
         st.error(f"Error in Actions page: {e}")
         st.exception(e)
@@ -1850,8 +2030,8 @@ try:
     st.markdown("---")
     st.markdown("""
     <div style='text-align: center; color: #666; padding: 20px;'>
-        <p>Cloud Security Monitoring Dashboard v1.0 | Powered by ML-based Threat Detection</p>
-        <p>🛡️ Random Forest • XGBoost • Isolation Forest</p>
+        <p>Cloud Security Monitoring Dashboard v1.0 | Adhya Hebbar • Rahul P • Suhas Raghavendra • Aparna SJ • Shaan D</p>
+        <p>Random Forest • XGBoost • Isolation Forest • Autoencoder</p>
     </div>
     """, unsafe_allow_html=True)
 except Exception as e:
