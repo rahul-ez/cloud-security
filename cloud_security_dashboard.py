@@ -1398,395 +1398,593 @@ elif page == "Performance Metrics":
 # ============================================================================
 elif page == "Feature Explainability":
     try:
-        st.title("Feature Explainability")
+        st.title("🧠 Feature Explainability with SHAP")
+        st.markdown("Understand why the model makes specific predictions using SHAP values")
         
         if st.session_state.data is None:
-            st.warning(" Please upload a dataset first")
+            st.warning("⚠️ Please upload a dataset first in the Dataset page")
         else:
             df = st.session_state.data
             
-            st.header("Model Selection")
-            explain_model = st.selectbox(
-                "Choose model for explanation",
-                ["Random Forest", "XGBoost", "Both"]
-            )
+            # Validate SHAP dependencies
+            try:
+                import shap
+                st.success("✅ SHAP library available")
+            except ImportError:
+                st.error("❌ SHAP not installed. Run: pip install shap")
+                st.stop()
             
-            st.header("Explanation Settings")
+            # ===================================================================
+            # STEP 1: DATA PREPARATION FOR SESSION-LEVEL DATA
+            # ===================================================================
+            st.header("📊 Data Configuration")
+            
+            # Define session-level features
+            session_numeric_features = [
+                'num_events', 'total_bytes', 'mean_bytes', 'max_bytes',
+                'mean_resp', 'std_resp', 'unique_actions', 'num_failures', 'duration_s'
+            ]
+            session_categorical_features = ['user_role', 'region']
+            
+            # Get available features
+            available_numeric = [f for f in session_numeric_features if f in df.columns]
+            available_categorical = [f for f in session_categorical_features if f in df.columns]
+            
+            if not available_numeric:
+                st.error("❌ No session-level numeric features found. Expected columns: " + ", ".join(session_numeric_features))
+                st.stop()
+            
+            st.info(f"✅ Found {len(available_numeric)} numeric features and {len(available_categorical)} categorical features")
+            st.info(f"   Numeric: {', '.join(available_numeric)}")
+            if available_categorical:
+                st.info(f"   Categorical: {', '.join(available_categorical)}")
+            
+            # ===================================================================
+            # STEP 2: MODEL AND SAMPLE SELECTION
+            # ===================================================================
             col1, col2 = st.columns(2)
-            with col1:
-                num_samples = st.slider("Number of samples to explain", 10, 200, 100)
-            with col2:
-                show_individual = st.checkbox("Show individual predictions", value=True)
             
-            if st.button("Generate SHAP Explanations", type="primary"):
-                with st.spinner("Generating SHAP explanations... This may take a minute."):
+            with col1:
+                explain_model = st.selectbox(
+                    "🤖 Select Model for Explanation",
+                    ["Random Forest", "Isolation Forest", "Autoencoder"],
+                    help="Choose which model to explain. Note: Autoencoder uses KernelExplainer which is slower."
+                )
+            
+            with col2:
+                num_samples = st.slider(
+                    "📈 Number of Samples to Explain",
+                    min_value=5,
+                    max_value=min(100, len(df)),
+                    value=min(20, len(df)),
+                    help="More samples = more accurate but slower computation"
+                )
+            
+            st.markdown("---")
+            
+            # ===================================================================
+            # STEP 3: GENERATE SHAP EXPLANATIONS
+            # ===================================================================
+            if st.button("🚀 Generate SHAP Explanations", type="primary", use_container_width=True):
+                with st.spinner("⏳ Generating SHAP explanations... This may take a few minutes"):
                     try:
                         # Load models
                         models = load_models()
-                        if models is None:
-                            st.error("Failed to load models. Please ensure model files exist in the 'models/' directory.")
+                        
+                        # Map friendly name to internal key
+                        model_map = {
+                            "Random Forest": "rf",
+                            "Isolation Forest": "if",
+                            "Autoencoder": "ae"
+                        }
+                        model_key = model_map[explain_model]
+                        
+                        if models is None or models.get(model_key) is None:
+                            st.error(f"❌ Failed to load {explain_model} model. Ensure model files exist in models/ directory")
                             st.stop()
-                        
-                        # Get numeric features (exclude non-feature columns)
-                        exclude_cols = ['session_id', 'timestamp', 'label', 'attack_type', 
-                                       'user_id', 'source_ip', 'geo_location', 'service_accessed', 
-                                       'auth_method', 'Session_ID', 'Label', 'Attack_Type']
-                        
-                        numeric_cols = [col for col in df.select_dtypes(include=[np.number]).columns 
-                                       if col not in exclude_cols]
-                        
-                        if len(numeric_cols) == 0:
-                            st.error("No numeric features found for explanation")
-                            st.stop()
-                        
-                        # Prepare data
-                        X_sample = df[numeric_cols].head(num_samples).fillna(0)
                         
                         # Select model
-                        if explain_model == "Random Forest":
-                            model = models['rf']
-                            model_name = "Random Forest"
-                        elif explain_model == "XGBoost":
-                            model = models['xgb']
-                            model_name = "XGBoost"
-                        else:
-                            model = models['rf']  # Default to RF for "Both"
-                            model_name = "Random Forest"
+                        model = models[model_key]
                         
-                        st.info(f"Computing SHAP values for {len(X_sample)} samples using {model_name}...")
+                        # Initialize variables
+                        X_processed = None
+                        feature_names_after_preprocessing = []
+                        explainer = None
+                        shap_values = None
                         
                         # ===================================================================
-                        # REAL SHAP IMPLEMENTATION
+                        # DATA PREPARATION BRANCHING
                         # ===================================================================
+                        st.status(f"🔍 Preparing data for {explain_model}...")
                         
-                        # Create SHAP explainer based on model type
-                        if explain_model in ["Random Forest", "Both"]:
-                            # TreeExplainer for tree-based models (faster and more accurate)
-                            explainer = shap.TreeExplainer(model)
-                            shap_values = explainer.shap_values(X_sample)
+                        if model_key == 'rf':
+                            # --- RANDOM FOREST (Numeric + Categorical) ---
+                            all_features = available_numeric + available_categorical
+                            X_raw = df[all_features].head(num_samples).copy()
                             
-                            # For binary classification, get positive class SHAP values
-                            if isinstance(shap_values, list):
-                                shap_values = shap_values[1]  # Positive class (anomaly)
-                        
-                        elif explain_model == "XGBoost":
-                            # TreeExplainer for XGBoost
-                            explainer = shap.TreeExplainer(models['xgb'])
-                            shap_values = explainer.shap_values(X_sample)
+                            # Fill missing
+                            for col in available_numeric: X_raw[col] = X_raw[col].fillna(0)
+                            for col in available_categorical: X_raw[col] = X_raw[col].fillna('unknown')
                             
-                            # For binary classification
-                            if isinstance(shap_values, list):
-                                shap_values = shap_values[1]
-                        
-                        # ===================================================================
-                        # 1. GLOBAL FEATURE IMPORTANCE
-                        # ===================================================================
-                        st.header("Global Feature Importance")
-                        st.markdown("Based on mean absolute SHAP values across all samples")
-                        
-                        # Calculate mean absolute SHAP values
-                        mean_abs_shap = np.abs(shap_values).mean(axis=0)
-                        
-                        importance_df = pd.DataFrame({
-                            'Feature': numeric_cols,
-                            'Mean |SHAP|': mean_abs_shap
-                        }).sort_values('Mean |SHAP|', ascending=False)
-                        
-                        # Plot top features
-                        top_n = min(15, len(importance_df))
-                        fig = px.bar(
-                            importance_df.head(top_n), 
-                            x='Mean |SHAP|', 
-                            y='Feature',
-                            orientation='h',
-                            title=f"Top {top_n} Features by SHAP Importance - {model_name}",
-                            color='Mean |SHAP|',
-                            color_continuous_scale='Viridis'
-                        )
-                        fig.update_layout(height=500, yaxis={'categoryorder':'total ascending'})
-                        st.plotly_chart(fig, use_container_width=True)
-                        
-                        # Show table
-                        with st.expander("📋 View Full Feature Importance Table"):
-                            st.dataframe(importance_df, use_container_width=True)
-                        
-                        # ===================================================================
-                        # 2. SHAP SUMMARY PLOT (Beeswarm-style)
-                        # ===================================================================
-                        st.header("🎨 SHAP Summary Plot")
-                        st.markdown("""
-                        This plot shows:
-                        - **X-axis**: SHAP value (impact on model output)
-                        - **Y-axis**: Features (ordered by importance)
-                        - **Color**: Feature value (red = high, blue = low)
-                        - Each dot represents one sample's SHAP value for that feature
-                        """)
-                        
-                        # Create beeswarm-style plot
-                        top_features_idx = importance_df.head(15).index
-                        top_features = [numeric_cols[i] for i in range(len(numeric_cols)) 
-                                       if numeric_cols[i] in importance_df.head(15)['Feature'].values]
-                        
-                        fig = make_subplots(rows=1, cols=1)
-                        
-                        for idx, feature in enumerate(top_features):
-                            feature_idx = numeric_cols.index(feature)
-                            feature_shap = shap_values[:, feature_idx]
-                            feature_values = X_sample[feature].values
-                            
-                            # Normalize feature values for color
-                            if feature_values.max() != feature_values.min():
-                                color_values = (feature_values - feature_values.min()) / (feature_values.max() - feature_values.min())
-                            else:
-                                color_values = np.ones_like(feature_values) * 0.5
-                            
-                            fig.add_trace(go.Scatter(
-                                x=feature_shap,
-                                y=[feature] * len(feature_shap),
-                                mode='markers',
-                                marker=dict(
-                                    color=color_values,
-                                    colorscale='RdBu_r',
-                                    size=5,
-                                    opacity=0.6,
-                                    showscale=idx == 0,
-                                    colorbar=dict(title="Feature<br>Value") if idx == 0 else None
-                                ),
-                                name=feature,
-                                showlegend=False,
-                                hovertemplate=f'<b>{feature}</b><br>SHAP: %{{x:.3f}}<br>Value: %{{marker.color:.2f}}<extra></extra>'
-                            ))
-                        
-                        fig.update_layout(
-                            title="SHAP Summary (Beeswarm Plot)",
-                            xaxis_title="SHAP Value (impact on prediction)",
-                            yaxis_title="Feature",
-                            height=600,
-                            hovermode='closest'
-                        )
-                        st.plotly_chart(fig, use_container_width=True)
-                        
-                        # ===================================================================
-                        # 3. SHAP DEPENDENCE PLOTS (Feature Interactions)
-                        # ===================================================================
-                        st.header("🔗 SHAP Dependence Plots")
-                        st.markdown("Explore how individual features affect predictions")
-                        
-                        if len(numeric_cols) >= 2:
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                main_feature = st.selectbox(
-                                    "Select main feature", 
-                                    importance_df['Feature'].values[:20],
-                                    key="main_feature"
-                                )
-                            with col2:
-                                interaction_feature = st.selectbox(
-                                    "Color by interaction feature (optional)", 
-                                    ['Auto'] + importance_df['Feature'].values[:20].tolist(),
-                                    key="interaction_feature"
-                                )
-                            
-                            main_idx = numeric_cols.index(main_feature)
-                            
-                            # Auto-detect interaction feature if not specified
-                            if interaction_feature == 'Auto':
-                                # Find feature with highest correlation to main feature's SHAP values
-                                correlations = []
-                                for i, feat in enumerate(numeric_cols):
-                                    if feat != main_feature:
-                                        corr = np.corrcoef(shap_values[:, main_idx], X_sample[feat])[0, 1]
-                                        correlations.append((feat, abs(corr)))
-                                if correlations:
-                                    interaction_feature = max(correlations, key=lambda x: x[1])[0]
-                                else:
-                                    interaction_feature = numeric_cols[0]
-                            
-                            # Create dependence plot
-                            fig = px.scatter(
-                                x=X_sample[main_feature],
-                                y=shap_values[:, main_idx],
-                                color=X_sample[interaction_feature],
-                                labels={
-                                    'x': f'{main_feature} (feature value)',
-                                    'y': f'SHAP value for {main_feature}',
-                                    'color': interaction_feature
-                                },
-                                title=f"SHAP Dependence: {main_feature}",
-                                color_continuous_scale='Viridis'
-                            )
-                            fig.update_traces(marker=dict(size=6, opacity=0.6))
-                            fig.update_layout(height=500)
-                            st.plotly_chart(fig, use_container_width=True)
-                            
-                            st.info(f"""
-                            **Interpretation:**
-                            - X-axis shows actual {main_feature} values
-                            - Y-axis shows how {main_feature} impacts the prediction (SHAP value)
-                            - Color shows {interaction_feature} values (potential interaction effect)
-                            """)
-                        
-                        # ===================================================================
-                        # 4. INDIVIDUAL PREDICTION EXPLANATIONS
-                        # ===================================================================
-                        if show_individual:
-                            st.header("🔍 Individual Prediction Explanations")
-                            
-                            sample_idx = st.selectbox(
-                                "Select sample to explain",
-                                range(len(X_sample)),
-                                format_func=lambda x: f"Sample {x} (Row {df.index[x]})"
-                            )
-                            
-                            # Get prediction for this sample
-                            sample_pred = model.predict(X_sample.iloc[[sample_idx]])[0]
-                            sample_proba = model.predict_proba(X_sample.iloc[[sample_idx]])[0]
-                            
-                            col1, col2, col3 = st.columns(3)
-                            with col1:
-                                st.metric("Prediction", "Anomaly" if sample_pred == 1 else "Normal")
-                            with col2:
-                                st.metric("Anomaly Probability", f"{sample_proba[1]:.2%}")
-                            with col3:
-                                st.metric("Normal Probability", f"{sample_proba[0]:.2%}")
-                            
-                            # Waterfall plot
-                            st.subheader("Force Plot / Waterfall")
-                            
-                            sample_shap = shap_values[sample_idx]
-                            base_value = explainer.expected_value
-                            if isinstance(base_value, np.ndarray):
-                                base_value = base_value[1]  # Positive class
-                            
-                            # Sort features by absolute SHAP value
-                            feature_importance = sorted(
-                                zip(numeric_cols, sample_shap, X_sample.iloc[sample_idx].values),
-                                key=lambda x: abs(x[1]),
-                                reverse=True
-                            )[:15]
-                            
-                            features = [x[0] for x in feature_importance]
-                            shap_vals = [x[1] for x in feature_importance]
-                            feat_vals = [x[2] for x in feature_importance]
-                            
-                            # Create waterfall chart
-                            fig = go.Figure()
-                            
-                            colors = ['#ff4444' if x < 0 else '#00C851' for x in shap_vals]
-                            
-                            fig.add_trace(go.Bar(
-                                y=features,
-                                x=shap_vals,
-                                orientation='h',
-                                marker_color=colors,
-                                text=[f"{v:.2f}" for v in feat_vals],
-                                textposition='auto',
-                                hovertemplate='<b>%{y}</b><br>SHAP: %{x:.4f}<br>Value: %{text}<extra></extra>'
-                            ))
-                            
-                            fig.update_layout(
-                                title=f"Top Contributing Features for Sample {sample_idx}",
-                                xaxis_title="SHAP Value (← pushes to Normal | pushes to Anomaly →)",
-                                yaxis_title="Feature",
-                                height=600,
-                                showlegend=False
-                            )
-                            
-                            # Add base value line
-                            fig.add_vline(x=0, line_dash="dash", line_color="gray", 
-                                        annotation_text="Neutral", annotation_position="top")
-                            
-                            st.plotly_chart(fig, use_container_width=True)
-                            
-                            # Feature values table
-                            st.subheader("Feature Values and SHAP Contributions")
-                            explanation_df = pd.DataFrame({
-                                'Feature': features,
-                                'Feature Value': feat_vals,
-                                'SHAP Value': shap_vals,
-                                'Effect': ['Increases Anomaly Score' if x > 0 else 'Decreases Anomaly Score' for x in shap_vals]
-                            })
-                            st.dataframe(explanation_df, use_container_width=True)
-                            
-                            # Explanation in plain English
-                            st.subheader("📝 Plain English Explanation")
-                            top_3_positive = [(f, v, sv) for f, v, sv in feature_importance if sv > 0][:3]
-                            top_3_negative = [(f, v, sv) for f, v, sv in feature_importance if sv < 0][:3]
-                            
-                            if sample_pred == 1:
-                                st.warning("🚨 **This sample is classified as ANOMALOUS**")
-                                st.markdown("**Main reasons pushing towards anomaly:**")
-                                for feat, val, shap_val in top_3_positive:
-                                    st.markdown(f"- **{feat}** = {val:.2f} (SHAP impact: +{shap_val:.4f})")
-                            else:
-                                st.success("✅ **This sample is classified as NORMAL**")
-                                st.markdown("**Main reasons pushing towards normal:**")
-                                for feat, val, shap_val in top_3_negative:
-                                    st.markdown(f"- **{feat}** = {val:.2f} (SHAP impact: {shap_val:.4f})")
-                        
-                        # ===================================================================
-                        # 5. ATTACK-SPECIFIC ANALYSIS (if labels exist)
-                        # ===================================================================
-                        if 'label' in df.columns or 'Label' in df.columns:
-                            st.header("⚠️ Feature Importance by Attack Type")
-                            
-                            label_col = 'label' if 'label' in df.columns else 'Label'
-                            attack_col = 'attack_type' if 'attack_type' in df.columns else None
-                            
-                            if attack_col and attack_col in df.columns:
-                                attack_types = df[attack_col].unique()
+                            if 'preprocessor' not in models:
+                                st.error("❌ Preprocessor not found.")
+                                st.stop()
                                 
-                                for attack in attack_types[:5]:  # Show top 5 attack types
-                                    if attack == 'Normal' or pd.isna(attack):
-                                        continue
-                                        
-                                    with st.expander(f"🎯 {attack}"):
-                                        # Get samples of this attack type
-                                        attack_mask = df[attack_col] == attack
-                                        attack_indices = df[attack_mask].index[:num_samples]
-                                        
-                                        if len(attack_indices) > 0:
-                                            # Get SHAP values for this attack type
-                                            attack_sample_indices = [i for i in range(len(X_sample)) 
-                                                                    if df.index[i] in attack_indices]
-                                            
-                                            if attack_sample_indices:
-                                                attack_shap = shap_values[attack_sample_indices]
-                                                attack_importance = np.abs(attack_shap).mean(axis=0)
-                                                
-                                                attack_df = pd.DataFrame({
-                                                    'Feature': numeric_cols,
-                                                    'Importance': attack_importance
-                                                }).sort_values('Importance', ascending=False).head(10)
-                                                
-                                                fig = px.bar(
-                                                    attack_df, 
-                                                    x='Importance', 
-                                                    y='Feature',
-                                                    orientation='h',
-                                                    title=f"Top Features for {attack}",
-                                                    color='Importance',
-                                                    color_continuous_scale='Reds'
-                                                )
-                                                fig.update_layout(yaxis={'categoryorder':'total ascending'})
-                                                st.plotly_chart(fig, use_container_width=True)
-                                                
-                                                st.markdown(f"""
-                                                **Key Indicators for {attack}:**
-                                                - Primary feature: **{attack_df.iloc[0]['Feature']}** 
-                                                - Top 3 features account for the majority of the signal
-                                                - Monitor these metrics for early detection
-                                                """)
+                            preprocessor = models['preprocessor']
+                            X_processed = preprocessor.transform(X_raw)
+                            
+                            # Get Feature Names
+                            try:
+                                feature_names_after_preprocessing = list(preprocessor.get_feature_names_out())
+                            except AttributeError:
+                                feature_names_after_preprocessing = available_numeric + \
+                                    list(preprocessor.named_transformers_['cat'].get_feature_names_out(available_categorical))
+                                    
+                        elif model_key in ['if', 'ae']:
+                            # --- ISOLATION FOREST & AUTOENCODER (Numeric Only) ---
+                            X_raw = df[available_numeric].head(num_samples).copy()
+                            for col in available_numeric: X_raw[col] = X_raw[col].fillna(0)
+                            
+                            # Use appropriate scaler
+                            scaler_key = 'scaler' if model_key == 'if' else 'scaler_ae'
+                            if scaler_key not in models or models[scaler_key] is None:
+                                st.error(f"❌ Scaler ({scaler_key}) not found.")
+                                st.stop()
+                                
+                            scaler = models[scaler_key]
+                            X_processed = scaler.transform(X_raw)
+                            feature_names_after_preprocessing = available_numeric  # 9 features
+                            
+                        st.status(f"✓ Data prepared: {X_processed.shape} features")
                         
-                        st.success("✅ SHAP analysis complete!")
+                        # ===================================================================
+                        # EXPLAINER SELECTION & COMPUTATION
+                        # ===================================================================
+                        st.status(f"🔧 Initializing SHAP Explainer for {explain_model}...")
+                        
+                        if model_key == 'rf':
+                            # TreeExplainer for Random Forest
+                            explainer = shap.TreeExplainer(model)
+                            explainer.assert_additivity = lambda *args, **kwargs: None
+                            shap_values = explainer.shap_values(X_processed)
+                            
+                            # Handle different output formats
+                            if isinstance(shap_values, list):
+                                shap_values = shap_values[1]  # Binary classification -> Positive class
+                            elif isinstance(shap_values, np.ndarray) and shap_values.ndim == 3:
+                                shap_values = shap_values[:, :, 1]
+                                
+                        elif model_key == 'if':
+                            # TreeExplainer for Isolation Forest
+                            # IF outputs anomaly score. Negative = Anomaly, Positive = Normal (usually)
+                            explainer = shap.TreeExplainer(model)
+                            explainer.assert_additivity = lambda *args, **kwargs: None
+                            shap_values = explainer.shap_values(X_processed)
+                            # Shape is usually (samples, features) for IF
+                            
+                        elif model_key == 'ae':
+                            # KernelExplainer for Autoencoder (Reconstruction Error)
+                            st.info("ℹ️ Autoencoder uses KernelExplainer (model-agnostic). This simulates perturbations to find feature impact on Reconstruction Error.")
+                            
+                            # Wrapper function must be pickleable or strictly defined
+                            def ae_predict_loss(data_numpy):
+                                # 1. Reconstruct
+                                reconstructed = model.predict(data_numpy, verbose=0)
+                                # 2. Compute MSE per sample (Reconstruction Error)
+                                mse = np.mean(np.power(data_numpy - reconstructed, 2), axis=1)
+                                return mse
+                            
+                            # Use a background dataset (kmeans summary) for speed
+                            # We use X_processed itself if small, or a summary if large
+                            background_data = shap.kmeans(X_processed, min(10, len(X_processed)))
+                            
+                            explainer = shap.KernelExplainer(ae_predict_loss, background_data)
+                            
+                            # Compute SHAP values
+                            with st.spinner("Calculating Kernel SHAP values (this is slow)..."):
+                                shap_values = explainer.shap_values(X_processed, nsamples=100)
+                        
+                        st.status("✅ SHAP values computed successfully!")
+                        st.info(f"Final SHAP shape: {shap_values.shape}")
+                        
+                        # Store in session state
+                        st.session_state.shap_values = shap_values
+                        st.session_state.shap_feature_names = feature_names_after_preprocessing
+                        st.session_state.shap_X_processed = X_processed
+                        st.session_state.shap_explainer = explainer
+                        st.session_state.shap_model = model
+                        st.session_state.shap_model_type = model_key # Store type for logic
+                        st.session_state.shap_computed = True
                         
                     except Exception as e:
-                        st.error(f"Error generating SHAP explanations: {str(e)}")
+                        st.error(f"❌ Critical Error during SHAP generation: {str(e)}")
                         st.exception(e)
-                        st.info("Make sure your models support SHAP TreeExplainer and data is properly formatted.")
+                        st.stop()
+
+            
+            # ===================================================================
+            # DISPLAY VISUALIZATIONS (if SHAP values exist in session state)
+            # ===================================================================
+            if st.session_state.get('shap_computed', False):
+                # Retrieve from session state
+                shap_values = st.session_state.shap_values
+                feature_names_after_preprocessing = st.session_state.shap_feature_names
+                X_processed = st.session_state.shap_X_processed
+                explainer = st.session_state.shap_explainer
+                model = st.session_state.shap_model
+                
+                # ===================================================================
+                # VISUALIZATION 1: GLOBAL FEATURE IMPORTANCE
+                # ===================================================================
+                st.header("📊 1. Global Feature Importance")
+                st.markdown("Average impact of each feature on model predictions across all samples")
+                
+                # Handle 2D/3D arrays properly
+                if len(shap_values.shape) > 2:
+                    mean_abs_shap = np.abs(shap_values).mean(axis=(0, 1))
+                else:
+                    mean_abs_shap = np.abs(shap_values).mean(axis=0)
+                
+                # Validate array lengths match
+                if len(feature_names_after_preprocessing) != len(mean_abs_shap):
+                    st.error(f"❌ Feature name count ({len(feature_names_after_preprocessing)}) doesn't match SHAP value count ({len(mean_abs_shap)})")
+                    st.info(f"Preprocessed data shape: {X_processed.shape}")
+                    st.info(f"SHAP values shape: {shap_values.shape}")
+                    st.stop()
+                
+                importance_df = pd.DataFrame({
+                    'Feature': feature_names_after_preprocessing,
+                    'Mean |SHAP|': mean_abs_shap
+                }).sort_values('Mean |SHAP|', ascending=False)
+                
+                col1, col2 = st.columns([2, 1])
+                
+                with col1:
+                    fig_importance = px.bar(
+                        importance_df,
+                        x='Mean |SHAP|',
+                        y='Feature',
+                        orientation='h',
+                        title="Feature Importance (Mean |SHAP| Value)",
+                        labels={'Mean |SHAP|': 'Average Impact on Prediction'},
+                        color='Mean |SHAP|',
+                        color_continuous_scale='Viridis'
+                    )
+                    fig_importance.update_layout(
+                        yaxis={'categoryorder': 'total ascending'},
+                        height=400
+                    )
+                    st.plotly_chart(fig_importance, use_container_width=True)
+                
+                with col2:
+                    st.dataframe(importance_df, use_container_width=True, hide_index=True)
+                        
+                # ===================================================================
+                # VISUALIZATION 2: SHAP SUMMARY PLOT (Beeswarm)
+                # ===================================================================
+                st.header("📈 2. SHAP Summary Plot")
+                st.markdown("How each feature value impacts model predictions")
+                
+                fig_summary = make_subplots(
+                    rows=1, cols=1,
+                    subplot_titles=("Feature Impact Distribution",)
+                )
+                
+                # Create beeswarm-style plot
+                top_features_count = min(12, len(feature_names_after_preprocessing))
+                top_features_idx = np.argsort(mean_abs_shap)[-top_features_count:][::-1]
+                
+                for idx_pos, feat_idx in enumerate(top_features_idx):
+                    feature_name = feature_names_after_preprocessing[feat_idx]
+                    feature_shap = shap_values[:, feat_idx]
+                    
+                    # For preprocessed features, we can't easily map back to raw values
+                    # So we'll use SHAP values for coloring instead
+                    if feature_shap.max() != feature_shap.min():
+                        colors = (feature_shap - feature_shap.min()) / (feature_shap.max() - feature_shap.min())
+                    else:
+                        colors = np.ones_like(feature_shap) * 0.5
+                    
+                    fig_summary.add_trace(go.Scatter(
+                        x=feature_shap,
+                        y=[feature_name] * len(feature_shap),
+                        mode='markers',
+                        marker=dict(
+                            color=colors,
+                            colorscale='RdBu_r',
+                            size=8,
+                            opacity=0.6,
+                            showscale=(idx_pos == 0),
+                            colorbar=dict(
+                                title="Feature<br>Value",
+                                len=0.7
+                            ) if idx_pos == 0 else None
+                        ),
+                        name=feature_name,
+                        showlegend=False,
+                        hovertemplate=f'<b>{feature_name}</b><br>SHAP: %{{x:.4f}}<br>Value: %{{marker.color:.2f}}<extra></extra>'
+                    ))
+                
+                fig_summary.update_layout(
+                    title="SHAP Summary (Beeswarm): Feature Impact on Model Output",
+                    xaxis_title="SHAP Value (←  Normal | Anomaly  →)",
+                    yaxis_title="Feature",
+                    height=500,
+                    hovermode='closest',
+                    showlegend=False
+                )
+                st.plotly_chart(fig_summary, use_container_width=True)
+                
+                # ===================================================================
+                # VISUALIZATION 3: DEPENDENCE PLOTS
+                # ===================================================================
+                st.header("🔗 3. Feature Dependence Analysis")
+                st.markdown("How feature values correlate with their SHAP impacts")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    primary_feature = st.selectbox(
+                        "Select Primary Feature",
+                        feature_names_after_preprocessing,
+                        index=0,
+                        key="dep_primary"
+                    )
+                
+                with col2:
+                    secondary_feature = st.selectbox(
+                        "Color by Feature (Interaction)",
+                        feature_names_after_preprocessing,
+                        index=min(1, len(feature_names_after_preprocessing)-1),
+                        key="dep_secondary"
+                    )
+                
+                if st.button("Generate Dependence Plot", key="dep_button"):
+                    try:
+                        primary_idx = list(feature_names_after_preprocessing).index(primary_feature)
+                        secondary_idx = list(feature_names_after_preprocessing).index(secondary_feature)
+                        
+                        primary_shap = shap_values[:, primary_idx]
+                        if isinstance(primary_shap, np.ndarray) and primary_shap.ndim > 1:
+                            primary_shap = primary_shap.flatten()
+                        
+                        secondary_shap = shap_values[:, secondary_idx]
+                        if isinstance(secondary_shap, np.ndarray) and secondary_shap.ndim > 1:
+                            secondary_shap = secondary_shap.flatten()
+                        
+                        # Use SHAP values for both axes since we can't map back to raw values easily
+                        fig_dep = px.scatter(
+                            x=primary_shap,
+                            y=secondary_shap,
+                            title=f"SHAP Interaction: {primary_feature} vs {secondary_feature}",
+                            labels={
+                                'x': f'SHAP({primary_feature})',
+                                'y': f'SHAP({secondary_feature})'
+                            },
+                            color_continuous_scale='RdBu_r'
+                        )
+                        fig_dep.update_layout(height=500)
+                        st.plotly_chart(fig_dep, use_container_width=True)
+                    except Exception as dep_err:
+                        st.error(f"Error creating dependence plot: {str(dep_err)}")
+                
+                # ===================================================================
+                # VISUALIZATION 4: INDIVIDUAL PREDICTION EXPLANATIONS
+                # ===================================================================
+                st.header("🎯 4. Individual Prediction Explanations")
+                st.markdown("Understand what drives specific predictions")
+                
+                sample_idx = st.slider(
+                    "Select Sample to Explain",
+                    min_value=0,
+                    max_value=len(X_processed)-1,
+                    value=0,
+                    key="sample_idx_slider"
+                )
+                
+                if st.button("Show Detailed Explanation", key="explain_button"):
+                    try:
+                        sample_shap = shap_values[sample_idx]
+                        if isinstance(sample_shap, np.ndarray) and sample_shap.ndim > 1:
+                            sample_shap = sample_shap.flatten()
+                        
+                        # Get prediction using preprocessed data
+                        # Handle different model types
+                        model_type = st.session_state.get('shap_model_type', 'rf')
+                        
+                        col1, col2, col3 = st.columns(3)
+                        
+                        if model_type == 'rf':
+                            sample_pred = model.predict(X_processed[sample_idx:sample_idx+1])[0]
+                            sample_proba = model.predict_proba(X_processed[sample_idx:sample_idx+1])[0]
+                            
+                            with col1:
+                                st.metric("Prediction", "🔴 ANOMALY" if sample_pred == 1 else "🟢 NORMAL")
+                            with col2:
+                                st.metric("Confidence", f"{max(sample_proba):.2%}")
+                            with col3:
+                                st.metric("Anomaly Probability", f"{sample_proba[1]:.2%}")
+                                
+                        elif model_type == 'if':
+                            # IF: -1 is outlier, 1 is inlier. Decision function: negative is outlier
+                            sample_pred = model.predict(X_processed[sample_idx:sample_idx+1])[0]
+                            decision_score = model.decision_function(X_processed[sample_idx:sample_idx+1])[0]
+                            
+                            with col1:
+                                st.metric("Prediction", "🔴 ANOMALY" if sample_pred == -1 else "🟢 NORMAL")
+                            with col2:
+                                st.metric("Anomaly Score", f"{decision_score:.4f}", help="Negative = Anomaly, Positive = Normal")
+                            with col3:
+                                st.metric("Status", "Outlier" if decision_score < 0 else "Inlier")
+                                
+                        elif model_type == 'ae':
+                            # AE: Reconstruction error
+                            reconstructed = model.predict(X_processed[sample_idx:sample_idx+1], verbose=0)
+                            mse = np.mean(np.power(X_processed[sample_idx:sample_idx+1] - reconstructed, 2))
+                            # Threshold is roughly 0.1 based on training (can be adjusted)
+                            threshold = 0.1 
+                            is_anomaly = mse > threshold
+                            
+                            with col1:
+                                st.metric("Prediction", "🔴 ANOMALY" if is_anomaly else "🟢 NORMAL")
+                            with col2:
+                                st.metric("Reconstruction Error", f"{mse:.4f}")
+                            with col3:
+                                st.metric("Threshold", f"{threshold:.2f}")
+                        
+                        # Feature contributions (using preprocessed feature names)
+                        st.subheader("Feature Contributions")
+                        
+                        contributions = sorted(
+                            zip(feature_names_after_preprocessing, sample_shap),
+                            key=lambda x: abs(float(x[1])),
+                            reverse=True
+                        )[:10]
+                        
+                        # Determine direction labels and colors based on model type
+                        if model_type == 'if':
+                            # IF: Negative SHAP -> Pushes to Anomaly (Class -1)
+                            #     Positive SHAP -> Pushes to Normal (Class 1)
+                            directions = ['→ Anomaly' if x[1] < 0 else '← Normal' for x in contributions]
+                            colors = ['#ff4444' if x[1] < 0 else '#00C851' for x in contributions]
+                        else:
+                            # RF/AE: Positive SHAP -> Pushes to Anomaly (Class 1 / High Error)
+                            directions = ['→ Anomaly' if x[1] > 0 else '← Normal' for x in contributions]
+                            colors = ['#ff4444' if x[1] > 0 else '#00C851' for x in contributions]
+                        
+                        contrib_df = pd.DataFrame({
+                            'Feature': [x[0] for x in contributions],
+                            'SHAP': [f"{x[1]:.4f}" for x in contributions],
+                            'Direction': directions
+                        })
+                        
+                        st.dataframe(contrib_df, use_container_width=True, hide_index=True)
+                        
+                        # Waterfall visualization
+                        fig_waterfall = go.Figure(
+                            data=[go.Bar(
+                                x=[x[1] for x in contributions],
+                                y=[x[0] for x in contributions],
+                                orientation='h',
+                                marker=dict(color=colors),
+                                text=[f"{x[1]:.3f}" for x in contributions],
+                                textposition='auto',
+                                hovertemplate='<b>%{y}</b><br>SHAP: %{x:.4f}<extra></extra>'
+                            )]
+                        )
+                        
+                        fig_waterfall.update_layout(
+                            title=f"Top Contributing Features - Sample {sample_idx}",
+                            xaxis_title="SHAP Value",
+                            yaxis_title="Feature",
+                            height=400,
+                            showlegend=False
+                        )
+                        
+                        st.plotly_chart(fig_waterfall, use_container_width=True)
+                        
+                    except Exception as explain_err:
+                        st.error(f"Error explaining individual prediction: {str(explain_err)}")
+                
+                # ===================================================================
+                # VISUALIZATION 5: FORCE PLOT-STYLE EXPLANATION
+                # ===================================================================
+                st.header("⚡ 5. Decision Plot")
+                st.markdown("How features combine to make the prediction")
+                
+                try:
+                    # Retrieve model type from session state
+                    model_type = st.session_state.get('shap_model_type', 'rf')
+                    
+                    base_value = explainer.expected_value
+                    
+                    # Handle base value extraction based on model type
+                    if model_type == 'rf':
+                        # RF: expected_value is usually [value_0, value_1]
+                        if isinstance(base_value, np.ndarray) and len(base_value) > 1:
+                            base_value = float(base_value[1])
+                        else:
+                            base_value = float(base_value)
+                    else:
+                        # IF/AE: expected_value is a scalar
+                        if isinstance(base_value, np.ndarray):
+                            base_value = float(base_value[0]) if len(base_value) > 0 else 0.0
+                        else:
+                            base_value = float(base_value)
+                    
+                    st.info(f"Base value: {base_value:.4f} ({'Mean Probability' if model_type == 'rf' else 'Mean Score' if model_type == 'if' else 'Mean Reconstruction Error'})")
+                    
+                    # Create decision plot for top samples
+                    decision_sample = min(5, len(X_processed))
+                    prediction_values = []
+                    
+                    for i in range(decision_sample):
+                        sample_shap = shap_values[i]
+                        if isinstance(sample_shap, np.ndarray) and sample_shap.ndim > 1:
+                            sample_shap = sample_shap.flatten()
+                        pred_val = base_value + sample_shap.sum()
+                        prediction_values.append(pred_val)
+                    
+                    # Determine label based on model type
+                    if model_type == 'rf':
+                        predictions = ['🔴 Anomaly' if v > 0.5 else '🟢 Normal' for v in prediction_values]
+                    elif model_type == 'if':
+                        # IF: Negative = Anomaly
+                        predictions = ['🔴 Anomaly' if v < 0 else '🟢 Normal' for v in prediction_values]
+                    else: # ae
+                        # AE: High Error = Anomaly (Threshold approx 0.1)
+                        predictions = ['🔴 Anomaly' if v > 0.1 else '🟢 Normal' for v in prediction_values]
+
+                    decision_df = pd.DataFrame({
+                        'Sample': [f"Sample {i}" for i in range(decision_sample)],
+                        'Value': prediction_values,
+                        'Prediction': predictions
+                    })
+                    
+                    st.dataframe(decision_df, use_container_width=True, hide_index=True)
+                    
+                except Exception as decision_err:
+                    st.warning(f"Could not create decision plot: {str(decision_err)}")
+                
+                # ===================================================================
+                # DATA EXPORT
+                # ===================================================================
+                st.header("📥 Export Analysis Results")
+                
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    csv_shap = pd.DataFrame(
+                        shap_values,
+                        columns=feature_names_after_preprocessing
+                    ).to_csv(index=False)
+                    st.download_button(
+                        "📊 Download SHAP Values",
+                        csv_shap,
+                        file_name=f"shap_values_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+                
+                with col2:
+                    csv_importance = importance_df.to_csv(index=False)
+                    st.download_button(
+                        "📈 Download Feature Importance",
+                        csv_importance,
+                        file_name=f"feature_importance_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+                
+                with col3:
+                    st.info("📋 Analysis exported successfully!")
+                
+                st.success("✅ SHAP analysis complete! Review the visualizations above for insights.")
+    
     except Exception as e:
         st.error(f"Error in Feature Explainability page: {e}")
         st.exception(e)
+
 # ============================================================================
 # PAGE 7: ACTIONS
 # ============================================================================
@@ -1797,6 +1995,7 @@ elif page == "Actions":
         if st.session_state.data is None or not st.session_state.predictions:
             st.warning("Please upload data and run predictions first")
         else:
+
             df = st.session_state.data.copy()
             
             # Add ensemble scores if available
@@ -2024,15 +2223,3 @@ elif page == "Actions":
     except Exception as e:
         st.error(f"Error in Actions page: {e}")
         st.exception(e)
-
-# Footer
-try:
-    st.markdown("---")
-    st.markdown("""
-    <div style='text-align: center; color: #666; padding: 20px;'>
-        <p>Cloud Security Monitoring Dashboard v1.0 | Adhya Hebbar • Rahul P • Suhas Raghavendra • Aparna SJ • Shaan D</p>
-        <p>Random Forest • XGBoost • Isolation Forest • Autoencoder</p>
-    </div>
-    """, unsafe_allow_html=True)
-except Exception as e:
-    st.warning(f"Warning: Could not display footer: {e}")
