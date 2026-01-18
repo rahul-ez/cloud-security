@@ -1398,26 +1398,24 @@ elif page == "Performance Metrics":
 # ============================================================================
 elif page == "Feature Explainability":
     try:
-        st.title("🧠 Feature Explainability with SHAP")
-        st.markdown("Understand why the model makes specific predictions using SHAP values")
+        st.title("Feature Explainability with SHAP")
         
         if st.session_state.data is None:
-            st.warning("⚠️ Please upload a dataset first in the Dataset page")
+            st.warning("Please upload a dataset first in the Dataset page")
         else:
             df = st.session_state.data
             
             # Validate SHAP dependencies
             try:
                 import shap
-                st.success("✅ SHAP library available")
             except ImportError:
-                st.error("❌ SHAP not installed. Run: pip install shap")
+                st.error("SHAP not installed. Run: pip install shap")
                 st.stop()
             
             # ===================================================================
             # STEP 1: DATA PREPARATION FOR SESSION-LEVEL DATA
             # ===================================================================
-            st.header("📊 Data Configuration")
+            st.header("Data Configuration")
             
             # Define session-level features
             session_numeric_features = [
@@ -1431,10 +1429,10 @@ elif page == "Feature Explainability":
             available_categorical = [f for f in session_categorical_features if f in df.columns]
             
             if not available_numeric:
-                st.error("❌ No session-level numeric features found. Expected columns: " + ", ".join(session_numeric_features))
+                st.error("No session-level numeric features found. Expected columns: " + ", ".join(session_numeric_features))
                 st.stop()
             
-            st.info(f"✅ Found {len(available_numeric)} numeric features and {len(available_categorical)} categorical features")
+            st.info(f"Found {len(available_numeric)} numeric features and {len(available_categorical)} categorical features")
             st.info(f"   Numeric: {', '.join(available_numeric)}")
             if available_categorical:
                 st.info(f"   Categorical: {', '.join(available_categorical)}")
@@ -1446,14 +1444,14 @@ elif page == "Feature Explainability":
             
             with col1:
                 explain_model = st.selectbox(
-                    "🤖 Select Model for Explanation",
+                    "Select Model for Explanation",
                     ["Random Forest", "Isolation Forest", "Autoencoder"],
                     help="Choose which model to explain. Note: Autoencoder uses KernelExplainer which is slower."
                 )
             
             with col2:
                 num_samples = st.slider(
-                    "📈 Number of Samples to Explain",
+                    "Number of Samples to Explain",
                     min_value=5,
                     max_value=min(100, len(df)),
                     value=min(20, len(df)),
@@ -1465,8 +1463,8 @@ elif page == "Feature Explainability":
             # ===================================================================
             # STEP 3: GENERATE SHAP EXPLANATIONS
             # ===================================================================
-            if st.button("🚀 Generate SHAP Explanations", type="primary", use_container_width=True):
-                with st.spinner("⏳ Generating SHAP explanations... This may take a few minutes"):
+            if st.button("Generate SHAP Explanations", type="primary", use_container_width=True):
+                with st.spinner("Generating SHAP explanations... This may take a few minutes"):
                     try:
                         # Load models
                         models = load_models()
@@ -1480,7 +1478,7 @@ elif page == "Feature Explainability":
                         model_key = model_map[explain_model]
                         
                         if models is None or models.get(model_key) is None:
-                            st.error(f"❌ Failed to load {explain_model} model. Ensure model files exist in models/ directory")
+                            st.error(f"Failed to load {explain_model} model. Ensure model files exist in models/ directory")
                             st.stop()
                         
                         # Select model
@@ -1495,7 +1493,7 @@ elif page == "Feature Explainability":
                         # ===================================================================
                         # DATA PREPARATION BRANCHING
                         # ===================================================================
-                        st.status(f"🔍 Preparing data for {explain_model}...")
+                        st.status(f"Preparing data for {explain_model}...")
                         
                         if model_key == 'rf':
                             # --- RANDOM FOREST (Numeric + Categorical) ---
@@ -1507,7 +1505,7 @@ elif page == "Feature Explainability":
                             for col in available_categorical: X_raw[col] = X_raw[col].fillna('unknown')
                             
                             if 'preprocessor' not in models:
-                                st.error("❌ Preprocessor not found.")
+                                st.error("Preprocessor not found.")
                                 st.stop()
                                 
                             preprocessor = models['preprocessor']
@@ -1528,19 +1526,19 @@ elif page == "Feature Explainability":
                             # Use appropriate scaler
                             scaler_key = 'scaler' if model_key == 'if' else 'scaler_ae'
                             if scaler_key not in models or models[scaler_key] is None:
-                                st.error(f"❌ Scaler ({scaler_key}) not found.")
+                                st.error(f"Scaler ({scaler_key}) not found.")
                                 st.stop()
                                 
                             scaler = models[scaler_key]
                             X_processed = scaler.transform(X_raw)
                             feature_names_after_preprocessing = available_numeric  # 9 features
                             
-                        st.status(f"✓ Data prepared: {X_processed.shape} features")
+                        st.status(f"Data prepared: {X_processed.shape} features")
                         
                         # ===================================================================
                         # EXPLAINER SELECTION & COMPUTATION
                         # ===================================================================
-                        st.status(f"🔧 Initializing SHAP Explainer for {explain_model}...")
+                        st.status(f"Initializing SHAP Explainer for {explain_model}...")
                         
                         if model_key == 'rf':
                             # TreeExplainer for Random Forest
@@ -1564,7 +1562,7 @@ elif page == "Feature Explainability":
                             
                         elif model_key == 'ae':
                             # KernelExplainer for Autoencoder (Reconstruction Error)
-                            st.info("ℹ️ Autoencoder uses KernelExplainer (model-agnostic). This simulates perturbations to find feature impact on Reconstruction Error.")
+                            st.info("Autoencoder uses KernelExplainer (model-agnostic). This simulates perturbations to find feature impact on Reconstruction Error.")
                             
                             # Wrapper function must be pickleable or strictly defined
                             def ae_predict_loss(data_numpy):
@@ -1581,10 +1579,10 @@ elif page == "Feature Explainability":
                             explainer = shap.KernelExplainer(ae_predict_loss, background_data)
                             
                             # Compute SHAP values
-                            with st.spinner("Calculating Kernel SHAP values (this is slow)..."):
+                            with st.spinner("Calculating Kernel SHAP values"):
                                 shap_values = explainer.shap_values(X_processed, nsamples=100)
                         
-                        st.status("✅ SHAP values computed successfully!")
+                        st.status("SHAP values computed successfully!")
                         st.info(f"Final SHAP shape: {shap_values.shape}")
                         
                         # Store in session state
@@ -1597,7 +1595,7 @@ elif page == "Feature Explainability":
                         st.session_state.shap_computed = True
                         
                     except Exception as e:
-                        st.error(f"❌ Critical Error during SHAP generation: {str(e)}")
+                        st.error(f"Critical Error during SHAP generation: {str(e)}")
                         st.exception(e)
                         st.stop()
 
@@ -1616,8 +1614,7 @@ elif page == "Feature Explainability":
                 # ===================================================================
                 # VISUALIZATION 1: GLOBAL FEATURE IMPORTANCE
                 # ===================================================================
-                st.header("📊 1. Global Feature Importance")
-                st.markdown("Average impact of each feature on model predictions across all samples")
+                st.header("1. Global Feature Importance")
                 
                 # Handle 2D/3D arrays properly
                 if len(shap_values.shape) > 2:
@@ -1627,7 +1624,7 @@ elif page == "Feature Explainability":
                 
                 # Validate array lengths match
                 if len(feature_names_after_preprocessing) != len(mean_abs_shap):
-                    st.error(f"❌ Feature name count ({len(feature_names_after_preprocessing)}) doesn't match SHAP value count ({len(mean_abs_shap)})")
+                    st.error(f"Feature name count ({len(feature_names_after_preprocessing)}) doesn't match SHAP value count ({len(mean_abs_shap)})")
                     st.info(f"Preprocessed data shape: {X_processed.shape}")
                     st.info(f"SHAP values shape: {shap_values.shape}")
                     st.stop()
@@ -1662,8 +1659,7 @@ elif page == "Feature Explainability":
                 # ===================================================================
                 # VISUALIZATION 2: SHAP SUMMARY PLOT (Beeswarm)
                 # ===================================================================
-                st.header("📈 2. SHAP Summary Plot")
-                st.markdown("How each feature value impacts model predictions")
+                st.header("2. SHAP Summary Plot")
                 
                 fig_summary = make_subplots(
                     rows=1, cols=1,
@@ -1707,7 +1703,7 @@ elif page == "Feature Explainability":
                 
                 fig_summary.update_layout(
                     title="SHAP Summary (Beeswarm): Feature Impact on Model Output",
-                    xaxis_title="SHAP Value (←  Normal | Anomaly  →)",
+                    xaxis_title="SHAP Value",
                     yaxis_title="Feature",
                     height=500,
                     hovermode='closest',
@@ -1718,8 +1714,7 @@ elif page == "Feature Explainability":
                 # ===================================================================
                 # VISUALIZATION 3: DEPENDENCE PLOTS
                 # ===================================================================
-                st.header("🔗 3. Feature Dependence Analysis")
-                st.markdown("How feature values correlate with their SHAP impacts")
+                st.header("3. Feature Dependence Analysis")
                 
                 col1, col2 = st.columns(2)
                 
@@ -1771,8 +1766,7 @@ elif page == "Feature Explainability":
                 # ===================================================================
                 # VISUALIZATION 4: INDIVIDUAL PREDICTION EXPLANATIONS
                 # ===================================================================
-                st.header("🎯 4. Individual Prediction Explanations")
-                st.markdown("Understand what drives specific predictions")
+                st.header("4. Individual Prediction Explanations")
                 
                 sample_idx = st.slider(
                     "Select Sample to Explain",
@@ -1799,7 +1793,7 @@ elif page == "Feature Explainability":
                             sample_proba = model.predict_proba(X_processed[sample_idx:sample_idx+1])[0]
                             
                             with col1:
-                                st.metric("Prediction", "🔴 ANOMALY" if sample_pred == 1 else "🟢 NORMAL")
+                                st.metric("Prediction", "ANOMALY" if sample_pred == 1 else "NORMAL")
                             with col2:
                                 st.metric("Confidence", f"{max(sample_proba):.2%}")
                             with col3:
@@ -1811,7 +1805,7 @@ elif page == "Feature Explainability":
                             decision_score = model.decision_function(X_processed[sample_idx:sample_idx+1])[0]
                             
                             with col1:
-                                st.metric("Prediction", "🔴 ANOMALY" if sample_pred == -1 else "🟢 NORMAL")
+                                st.metric("Prediction", "ANOMALY" if sample_pred == -1 else "NORMAL")
                             with col2:
                                 st.metric("Anomaly Score", f"{decision_score:.4f}", help="Negative = Anomaly, Positive = Normal")
                             with col3:
@@ -1826,7 +1820,7 @@ elif page == "Feature Explainability":
                             is_anomaly = mse > threshold
                             
                             with col1:
-                                st.metric("Prediction", "🔴 ANOMALY" if is_anomaly else "🟢 NORMAL")
+                                st.metric("Prediction", "ANOMALY" if is_anomaly else "NORMAL")
                             with col2:
                                 st.metric("Reconstruction Error", f"{mse:.4f}")
                             with col3:
@@ -1889,8 +1883,7 @@ elif page == "Feature Explainability":
                 # ===================================================================
                 # VISUALIZATION 5: FORCE PLOT-STYLE EXPLANATION
                 # ===================================================================
-                st.header("⚡ 5. Decision Plot")
-                st.markdown("How features combine to make the prediction")
+                st.header("5. Decision Plot")
                 
                 try:
                     # Retrieve model type from session state
@@ -1927,13 +1920,13 @@ elif page == "Feature Explainability":
                     
                     # Determine label based on model type
                     if model_type == 'rf':
-                        predictions = ['🔴 Anomaly' if v > 0.5 else '🟢 Normal' for v in prediction_values]
+                        predictions = ['Anomaly' if v > 0.5 else 'Normal' for v in prediction_values]
                     elif model_type == 'if':
                         # IF: Negative = Anomaly
-                        predictions = ['🔴 Anomaly' if v < 0 else '🟢 Normal' for v in prediction_values]
+                        predictions = ['Anomaly' if v < 0 else 'Normal' for v in prediction_values]
                     else: # ae
                         # AE: High Error = Anomaly (Threshold approx 0.1)
-                        predictions = ['🔴 Anomaly' if v > 0.1 else '🟢 Normal' for v in prediction_values]
+                        predictions = ['Anomaly' if v > 0.1 else 'Normal' for v in prediction_values]
 
                     decision_df = pd.DataFrame({
                         'Sample': [f"Sample {i}" for i in range(decision_sample)],
@@ -1949,7 +1942,7 @@ elif page == "Feature Explainability":
                 # ===================================================================
                 # DATA EXPORT
                 # ===================================================================
-                st.header("📥 Export Analysis Results")
+                st.header("Export Analysis Results")
                 
                 col1, col2, col3 = st.columns(3)
                 
@@ -1959,7 +1952,7 @@ elif page == "Feature Explainability":
                         columns=feature_names_after_preprocessing
                     ).to_csv(index=False)
                     st.download_button(
-                        "📊 Download SHAP Values",
+                        "Download SHAP Values",
                         csv_shap,
                         file_name=f"shap_values_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
                         mime="text/csv",
@@ -1969,7 +1962,7 @@ elif page == "Feature Explainability":
                 with col2:
                     csv_importance = importance_df.to_csv(index=False)
                     st.download_button(
-                        "📈 Download Feature Importance",
+                        "Download Feature Importance",
                         csv_importance,
                         file_name=f"feature_importance_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
                         mime="text/csv",
@@ -1977,9 +1970,9 @@ elif page == "Feature Explainability":
                     )
                 
                 with col3:
-                    st.info("📋 Analysis exported successfully!")
+                    st.info("Analysis exported successfully!")
                 
-                st.success("✅ SHAP analysis complete! Review the visualizations above for insights.")
+                st.success("SHAP analysis complete! Review the visualizations above for insights.")
     
     except Exception as e:
         st.error(f"Error in Feature Explainability page: {e}")
