@@ -104,7 +104,7 @@ def load_models():
         # Check if models directory exists
         if not os.path.exists(models_dir):
             st.error(f"Models directory not found. Looking in: {os.path.abspath(models_dir)}")
-            st.info("Please ensure your 'models' folder is in the same directory as app.py")
+            # st.info("Please ensure your 'models' folder is in the same directory as app.py")
             return None
         
         # Define model files
@@ -123,8 +123,8 @@ def load_models():
             filepath = os.path.join(models_dir, filename)
             
             if not os.path.exists(filepath):
-                st.warning(f"⚠️ Model file not found: {filename}")
-                st.info(f"Looking in: {filepath}")
+                # st.warning(f"⚠️ Model file not found: {filename}")
+                # st.info(f"Looking in: {filepath}")
                 models[key] = None
                 continue
             
@@ -142,20 +142,20 @@ def load_models():
                         except Exception as load_error:
                             # If normal load fails, try with compile=False
                             try:
-                                st.warning(f"⚠️ Normal load failed, trying with compile=False...")
+                                # st.warning(f"⚠️ Normal load failed, trying with compile=False...")
                                 models[key] = tf.keras.models.load_model(filepath, compile=False)
                                 ae_loaded = True
                             except Exception as compile_false_error:
                                 # If still fails, try with custom_objects
                                 try:
-                                    st.warning(f"⚠️ Still failing, trying with safe mode...")
+                                    # st.warning(f"⚠️ Still failing, trying with safe mode...")
                                     models[key] = tf.keras.models.load_model(filepath, compile=False, safe_mode=False)
                                     ae_loaded = True
                                 except Exception as custom_error:
                                     raise compile_false_error
                     except ImportError as ie:
-                        st.warning(f"⚠️ TensorFlow not installed. Install with: pip install tensorflow")
-                        st.info(f"Attempting Keras standalone...")
+                        # st.warning(f"⚠️ TensorFlow not installed. Install with: pip install tensorflow")
+                        # st.info(f"Attempting Keras standalone...")
                         try:
                             import keras
                             from keras.models import load_model
@@ -175,24 +175,25 @@ def load_models():
                             models[key] = None
                     except Exception as e:
                         st.error(f"❌ Could not load H5 file: {str(e)}")
-                        st.info("This may be due to:")
-                        st.info("1. Version mismatch between Keras/TensorFlow used to save and current installation")
-                        st.info("2. Try upgrading: pip install --upgrade tensorflow keras")
-                        st.info("3. Or downgrade to match the original versions")
+                        # st.info("This may be due to:")
+                        # st.info("1. Version mismatch between Keras/TensorFlow used to save and current installation")
+                        # st.info("2. Try upgrading: pip install --upgrade tensorflow keras")
+                        # st.info("3. Or downgrade to match the original versions")
                         models[key] = None
                     
                     if ae_loaded:
-                        st.success(f"✅ Loaded {filename}", icon="✅")
+                        # st.success(f"✅ Loaded {filename}", icon="✅")
+                        pass
                 else:
                     # Try joblib first, then pickle
                     try:
                         import joblib
                         models[key] = joblib.load(filepath)
                     except ImportError:
-                        st.warning("joblib not available, trying pickle")
+                        # st.warning("joblib not available, trying pickle")
                         with open(filepath, 'rb') as f:
                             models[key] = pickle.load(f)
-                    st.success(f"✅ Loaded {filename}", icon="✅")
+                    # st.success(f"✅ Loaded {filename}", icon="✅")
             except Exception as e:
                 st.error(f"❌ Error loading {filename}: {str(e)}")
                 models[key] = None
@@ -216,7 +217,7 @@ try:
     page = st.sidebar.radio(
         "Select Page",
         ["Home", "Dataset", "Model Predictions", "Ensemble Anomaly Score", 
-         "Performance Metrics", "Feature Explainability", "Actions"]
+         "Performance Metrics", "Model Comparison", "Feature Explainability", "Actions"]
     )
 
     st.sidebar.markdown("---")
@@ -300,6 +301,7 @@ if page == "Home":
             <p>Random Forest</p>
             <p>XGBoost</p>
             <p>Isolation Forest</p>
+            <p>Autoencoder</p>
             </div>
             """, unsafe_allow_html=True)
         
@@ -974,17 +976,20 @@ elif page == "Ensemble Anomaly Score":
                         # Display results
                         st.header("Ensemble Results")
                         
-                        col1, col2, col3, col4 = st.columns(4)
+                        col1, col2, col3, col4, col5 = st.columns(5)
                         with col1:
-                            high_risk = (ensemble_score >= 0.8).sum()
-                            st.metric("🔴 High Risk", f"{high_risk:,}")
+                            critical = (ensemble_score >= 0.9).sum()
+                            st.metric("🔴 Critical", f"{critical:,}")
                         with col2:
-                            medium_risk = ((ensemble_score >= 0.5) & (ensemble_score < 0.8)).sum()
-                            st.metric("🟡 Medium Risk", f"{medium_risk:,}")
+                            high = ((ensemble_score >= 0.8) & (ensemble_score < 0.9)).sum()
+                            st.metric("🟠 High", f"{high:,}")
                         with col3:
-                            low_risk = (ensemble_score < 0.5).sum()
-                            st.metric("🟢 Low Risk", f"{low_risk:,}")
+                            medium = ((ensemble_score >= 0.5) & (ensemble_score < 0.8)).sum()
+                            st.metric("🟡 Medium", f"{medium:,}")
                         with col4:
+                            low = (ensemble_score < 0.5).sum()
+                            st.metric("🟢 Low", f"{low:,}")
+                        with col5:
                             alerts = (ensemble_pred == 1).sum()
                             st.metric("🚨 Total Alerts", f"{alerts:,}")
                         
@@ -1013,16 +1018,17 @@ elif page == "Ensemble Anomaly Score":
                         # Risk categories pie chart
                         st.subheader("Risk Category Distribution")
                         risk_categories = pd.DataFrame({
-                            'Category': ['High Risk', 'Medium Risk', 'Low Risk'],
-                            'Count': [high_risk, medium_risk, low_risk]
+                            'Category': ['Critical', 'High', 'Medium', 'Low'],
+                            'Count': [critical, high, medium, low]
                         })
                         
                         fig = px.pie(risk_categories, values='Count', names='Category',
                                    color='Category',
                                    color_discrete_map={
-                                       'High Risk': '#ff4444',
-                                       'Medium Risk': '#ffbb33',
-                                       'Low Risk': '#00C851'
+                                       'Critical': '#d32f2f',
+                                       'High': '#f57c00',
+                                       'Medium': '#fbc02d',
+                                       'Low': '#388e3c'
                                    })
                         st.plotly_chart(fig, use_container_width=True)
                         
@@ -1393,8 +1399,224 @@ elif page == "Performance Metrics":
     except Exception as e:
         st.error(f"Error in Performance Metrics page: {e}")
         st.exception(e)
+
 # ============================================================================
-# PAGE 6: FEATURE EXPLAINABILITY
+# PAGE 6: MODEL COMPARISON
+# ============================================================================
+elif page == "Model Comparison":
+    try:
+        st.title("Model Comparison Analysis")
+        
+        if st.session_state.data is None:
+            st.warning("⚠️ Please upload a dataset first in the Dataset page")
+        else:
+            df = st.session_state.data.copy()
+            
+            # Check for ground truth
+            label_col = next((col for col in ['ground_truth', 'anomaly_label', 'label', 'Label'] if col in df.columns), None)
+            
+            if label_col:
+                st.info(f"Found ground truth labels in column: `{label_col}`")
+                y_true = df[label_col].astype(int).values
+            else:
+                st.warning("No ground truth labels found. Comparisons will be based on prediction distributions.")
+                y_true = None
+
+            if st.button("Run Comprehensive Model Comparison", type="primary", use_container_width=True):
+                with st.spinner("Evaluating all models..."):
+                    try:
+                        # Container for status updates that will be cleared after execution
+                        status_container = st.empty()
+                        
+                        with status_container.container():
+                            # Load all models
+                            models = load_models()
+                            if models is None:
+                                st.error("Failed to load models.")
+                                st.stop()
+                                
+                            # Feature sets
+                            numerical_features = ['num_events', 'total_bytes', 'mean_bytes', 'max_bytes', 
+                                                'mean_resp', 'std_resp', 'unique_actions', 'num_failures', 'duration_s']
+                            categorical_features = ['user_role', 'region']
+                            
+                            available_num = [f for f in numerical_features if f in df.columns]
+                            available_cat = [f for f in categorical_features if f in df.columns]
+                            
+                            # Prepare Data
+                            st.status("Preparing data for evaluation...")
+                            X_supervised = df[available_num + available_cat].fillna(0)
+                            if models.get('preprocessor') is not None:
+                                X_supervised_proc = models['preprocessor'].transform(X_supervised)
+                            else:
+                                X_supervised_proc = X_supervised.values
+                                
+                            X_if_ae = df[available_num].fillna(0)
+                            if models.get('scaler') is not None:
+                                X_if_proc = models['scaler'].transform(X_if_ae)
+                            else:
+                                X_if_proc = X_if_ae.values
+                                
+                            if models.get('scaler_ae') is not None:
+                                X_ae_proc = models['scaler_ae'].transform(X_if_ae)
+                            else:
+                                X_ae_proc = X_if_ae.values
+                                
+                            # Predictions & Timing
+                            import time
+                            from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
+                            
+                            results = []
+                            
+                            # Model Map
+                            model_configs = [
+                                ('Random Forest', 'rf', X_supervised_proc, 'supervised'),
+                                ('XGBoost', 'xgb', X_supervised_proc, 'supervised'),
+                                ('Isolation Forest', 'if', X_if_proc, 'unsupervised'),
+                                ('Autoencoder', 'ae', X_ae_proc, 'unsupervised')
+                            ]
+                            
+                            p_bar = st.progress(0)
+                            for i, (name, key, data, mtype) in enumerate(model_configs):
+                                st.status(f"Evaluating {name}...")
+                                model = models.get(key)
+                                if model is None:
+                                    p_bar.progress((i + 1) / len(model_configs))
+                                    continue
+                                    
+                                start_time = time.time()
+                                try:
+                                    if key == 'rf' or key == 'xgb':
+                                        y_pred = model.predict(data).astype(int)
+                                        y_proba = model.predict_proba(data)[:, 1]
+                                    elif key == 'if':
+                                        y_pred_raw = model.predict(data)
+                                        y_pred = (y_pred_raw == -1).astype(int)
+                                        # Normalize scores to 0-1 for AUC
+                                        scores = model.score_samples(data)
+                                        y_proba = (scores - scores.min()) / (scores.max() - scores.min() + 1e-8)
+                                        y_proba = 1 - y_proba # Invert so high = anomaly
+                                    elif key == 'ae':
+                                        try:
+                                            reconstructed = model.predict(data, verbose=0)
+                                        except:
+                                            reconstructed = model.predict(data)
+                                        mse = np.mean(np.power(data - reconstructed, 2), axis=1)
+                                        # Use 95th percentile as default threshold for comparison
+                                        threshold = np.percentile(mse, 95)
+                                        y_pred = (mse > threshold).astype(int)
+                                        y_proba = (mse - mse.min()) / (mse.max() - mse.min() + 1e-8)
+                                    
+                                    end_time = time.time()
+                                    inference_time = (end_time - start_time) / len(data) * 1000 # ms per sample
+                                    
+                                    metrics = {
+                                        'Model': name,
+                                        'Anomalies': y_pred.sum(),
+                                        'Anomaly Rate (%)': (y_pred.sum() / len(y_pred)) * 100,
+                                        'Inference Time (ms/sample)': inference_time
+                                    }
+                                    
+                                    if y_true is not None:
+                                        # Ensure y_true matches y_pred length
+                                        yt = y_true[:len(y_pred)]
+                                        metrics['Accuracy'] = accuracy_score(yt, y_pred)
+                                        metrics['Precision'] = precision_score(yt, y_pred, zero_division=0)
+                                        metrics['Recall'] = recall_score(yt, y_pred, zero_division=0)
+                                        metrics['F1-Score'] = f1_score(yt, y_pred, zero_division=0)
+                                        try:
+                                            metrics['ROC-AUC'] = roc_auc_score(yt, y_proba)
+                                        except:
+                                            metrics['ROC-AUC'] = 0.5
+                                    
+                                    results.append(metrics)
+                                except Exception as eval_err:
+                                    st.warning(f"Failed to evaluate {name}: {str(eval_err)}")
+                                
+                                p_bar.progress((i + 1) / len(model_configs))
+
+                        # Clear the status container once comparison is done
+                        status_container.empty()
+                                
+                        if not results:
+                            st.error("No models were successfully evaluated.")
+                            st.stop()
+                            
+                        comparison_df = pd.DataFrame(results)
+                        
+                        # --- Display Comparison Visuals ---
+                        st.header("Performance Comparison Results")
+                        
+                        if y_true is not None:
+                            # Grouped Bar Chart for metrics
+                            plot_cols = ['Accuracy', 'Precision', 'Recall', 'F1-Score']
+                            fig = go.Figure()
+                            for col in plot_cols:
+                                fig.add_trace(go.Bar(
+                                    name=col,
+                                    x=comparison_df['Model'],
+                                    y=comparison_df[col],
+                                    text=comparison_df[col].apply(lambda x: f'{x:.3f}'),
+                                    textposition='auto',
+                                ))
+                            fig.update_layout(
+                                title="Model Performance Metrics Comparison",
+                                barmode='group',
+                                xaxis_title="Model",
+                                yaxis_title="Score",
+                                height=500,
+                                legend_title="Metrics"
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
+                            
+                            # ROC-AUC Bar Chart
+                            fig_auc = px.bar(comparison_df, x='Model', y='ROC-AUC', 
+                                           title="ROC-AUC Score Comparison",
+                                           color='ROC-AUC',
+                                           color_continuous_scale='RdYlGn',
+                                           text_auto='.3f')
+                            st.plotly_chart(fig_auc, use_container_width=True)
+                        
+                        # Detection Rate Comparison
+                        fig_rate = px.bar(comparison_df, x='Model', y='Anomaly Rate (%)',
+                                        title="Detection Rate Comparison (Anomaly %)",
+                                        color='Anomaly Rate (%)',
+                                        text_auto='.2f')
+                        st.plotly_chart(fig_rate, use_container_width=True)
+                        
+                        # Inference Time Comparison
+                        fig_time = px.bar(comparison_df, x='Model', y='Inference Time (ms/sample)',
+                                        title="Inference Latency Comparison (ms per sample)",
+                                        log_y=True,
+                                        color='Inference Time (ms/sample)',
+                                        text_auto='.4f')
+                        st.plotly_chart(fig_time, use_container_width=True)
+                        
+                        # Detailed Dataframe
+                        st.header("Detailed Metric Summary")
+                        # Highlight max for positive metrics, min for inference time
+                        st.dataframe(comparison_df, use_container_width=True)
+                        
+                        # Summary insight
+                        st.header("Summary Insight")
+                        if y_true is not None:
+                            best_f1_row = comparison_df.loc[comparison_df['F1-Score'].idxmax()]
+                            st.success(f"The best performing model based on F1-Score is **{best_f1_row['Model']}** with a score of **{best_f1_row['F1-Score']:.3f}**.")
+                            
+                            fastest_row = comparison_df.loc[comparison_df['Inference Time (ms/sample)'].idxmin()]
+                            st.info(f"The most efficient model (lowest latency) is **{fastest_row['Model']}** taking **{fastest_row['Inference Time (ms/sample)']:.4f} ms** per sample.")
+                        else:
+                            most_sensitive = comparison_df.loc[comparison_df['Anomaly Rate (%)'].idxmax()]
+                            st.info(f"Between all models, **{most_sensitive['Model']}** flagged the most anomalies (**{most_sensitive['Anomaly Rate (%)']:.2f}%**).")
+                        
+                    except Exception as e:
+                        st.error(f"Error in comparison logic: {str(e)}")
+                        st.exception(e)
+    except Exception as e:
+        st.error(f"Error in Model Comparison page: {e}")
+        st.exception(e)
+# ============================================================================
+# PAGE 7: FEATURE EXPLAINABILITY
 # ============================================================================
 elif page == "Feature Explainability":
     try:
@@ -1432,10 +1654,10 @@ elif page == "Feature Explainability":
                 st.error("No session-level numeric features found. Expected columns: " + ", ".join(session_numeric_features))
                 st.stop()
             
-            st.info(f"Found {len(available_numeric)} numeric features and {len(available_categorical)} categorical features")
-            st.info(f"   Numeric: {', '.join(available_numeric)}")
-            if available_categorical:
-                st.info(f"   Categorical: {', '.join(available_categorical)}")
+            st.info(f"Found {len(available_numeric)} numeric features and {len(available_categorical)} categorical features                                 \n Numeric: {', '.join(available_numeric)}                                                                                                   \n Categorical: {', '.join(available_categorical)}")
+            # st.info(f"   Numeric: {', '.join(available_numeric)}")
+            # if available_categorical:
+            #     st.info(f"   Categorical: {', '.join(available_categorical)}")
             
             # ===================================================================
             # STEP 2: MODEL AND SAMPLE SELECTION
@@ -1466,133 +1688,140 @@ elif page == "Feature Explainability":
             if st.button("Generate SHAP Explanations", type="primary", use_container_width=True):
                 with st.spinner("Generating SHAP explanations... This may take a few minutes"):
                     try:
-                        # Load models
-                        models = load_models()
+                        # Container for status updates that will be cleared after execution
+                        status_container = st.empty()
                         
-                        # Map friendly name to internal key
-                        model_map = {
-                            "Random Forest": "rf",
-                            "Isolation Forest": "if",
-                            "Autoencoder": "ae"
-                        }
-                        model_key = model_map[explain_model]
-                        
-                        if models is None or models.get(model_key) is None:
-                            st.error(f"Failed to load {explain_model} model. Ensure model files exist in models/ directory")
-                            st.stop()
-                        
-                        # Select model
-                        model = models[model_key]
-                        
-                        # Initialize variables
-                        X_processed = None
-                        feature_names_after_preprocessing = []
-                        explainer = None
-                        shap_values = None
-                        
-                        # ===================================================================
-                        # DATA PREPARATION BRANCHING
-                        # ===================================================================
-                        st.status(f"Preparing data for {explain_model}...")
-                        
-                        if model_key == 'rf':
-                            # --- RANDOM FOREST (Numeric + Categorical) ---
-                            all_features = available_numeric + available_categorical
-                            X_raw = df[all_features].head(num_samples).copy()
+                        with status_container.container():
+                            # Load models
+                            models = load_models()
                             
-                            # Fill missing
-                            for col in available_numeric: X_raw[col] = X_raw[col].fillna(0)
-                            for col in available_categorical: X_raw[col] = X_raw[col].fillna('unknown')
+                            # Map friendly name to internal key
+                            model_map = {
+                                "Random Forest": "rf",
+                                "Isolation Forest": "if",
+                                "Autoencoder": "ae"
+                            }
+                            model_key = model_map[explain_model]
                             
-                            if 'preprocessor' not in models:
-                                st.error("Preprocessor not found.")
+                            if models is None or models.get(model_key) is None:
+                                st.error(f"Failed to load {explain_model} model. Ensure model files exist in models/ directory")
                                 st.stop()
-                                
-                            preprocessor = models['preprocessor']
-                            X_processed = preprocessor.transform(X_raw)
                             
-                            # Get Feature Names
-                            try:
-                                feature_names_after_preprocessing = list(preprocessor.get_feature_names_out())
-                            except AttributeError:
-                                feature_names_after_preprocessing = available_numeric + \
-                                    list(preprocessor.named_transformers_['cat'].get_feature_names_out(available_categorical))
+                            # Select model
+                            model = models[model_key]
+                            
+                            # Initialize variables
+                            X_processed = None
+                            feature_names_after_preprocessing = []
+                            explainer = None
+                            shap_values = None
+                            
+                            # ===================================================================
+                            # DATA PREPARATION BRANCHING
+                            # ===================================================================
+                            st.status(f"Preparing data for {explain_model}...")
+                            
+                            if model_key == 'rf':
+                                # --- RANDOM FOREST (Numeric + Categorical) ---
+                                all_features = available_numeric + available_categorical
+                                X_raw = df[all_features].head(num_samples).copy()
+                                
+                                # Fill missing
+                                for col in available_numeric: X_raw[col] = X_raw[col].fillna(0)
+                                for col in available_categorical: X_raw[col] = X_raw[col].fillna('unknown')
+                                
+                                if 'preprocessor' not in models:
+                                    st.error("Preprocessor not found.")
+                                    st.stop()
                                     
-                        elif model_key in ['if', 'ae']:
-                            # --- ISOLATION FOREST & AUTOENCODER (Numeric Only) ---
-                            X_raw = df[available_numeric].head(num_samples).copy()
-                            for col in available_numeric: X_raw[col] = X_raw[col].fillna(0)
-                            
-                            # Use appropriate scaler
-                            scaler_key = 'scaler' if model_key == 'if' else 'scaler_ae'
-                            if scaler_key not in models or models[scaler_key] is None:
-                                st.error(f"Scaler ({scaler_key}) not found.")
-                                st.stop()
+                                preprocessor = models['preprocessor']
+                                X_processed = preprocessor.transform(X_raw)
                                 
-                            scaler = models[scaler_key]
-                            X_processed = scaler.transform(X_raw)
-                            feature_names_after_preprocessing = available_numeric  # 9 features
-                            
-                        st.status(f"Data prepared: {X_processed.shape} features")
-                        
-                        # ===================================================================
-                        # EXPLAINER SELECTION & COMPUTATION
-                        # ===================================================================
-                        st.status(f"Initializing SHAP Explainer for {explain_model}...")
-                        
-                        if model_key == 'rf':
-                            # TreeExplainer for Random Forest
-                            explainer = shap.TreeExplainer(model)
-                            explainer.assert_additivity = lambda *args, **kwargs: None
-                            shap_values = explainer.shap_values(X_processed)
-                            
-                            # Handle different output formats
-                            if isinstance(shap_values, list):
-                                shap_values = shap_values[1]  # Binary classification -> Positive class
-                            elif isinstance(shap_values, np.ndarray) and shap_values.ndim == 3:
-                                shap_values = shap_values[:, :, 1]
+                                # Get Feature Names
+                                try:
+                                    feature_names_after_preprocessing = list(preprocessor.get_feature_names_out())
+                                except AttributeError:
+                                    feature_names_after_preprocessing = available_numeric + \
+                                        list(preprocessor.named_transformers_['cat'].get_feature_names_out(available_categorical))
+                                        
+                            elif model_key in ['if', 'ae']:
+                                # --- ISOLATION FOREST & AUTOENCODER (Numeric Only) ---
+                                X_raw = df[available_numeric].head(num_samples).copy()
+                                for col in available_numeric: X_raw[col] = X_raw[col].fillna(0)
                                 
-                        elif model_key == 'if':
-                            # TreeExplainer for Isolation Forest
-                            # IF outputs anomaly score. Negative = Anomaly, Positive = Normal (usually)
-                            explainer = shap.TreeExplainer(model)
-                            explainer.assert_additivity = lambda *args, **kwargs: None
-                            shap_values = explainer.shap_values(X_processed)
-                            # Shape is usually (samples, features) for IF
+                                # Use appropriate scaler
+                                scaler_key = 'scaler' if model_key == 'if' else 'scaler_ae'
+                                if scaler_key not in models or models[scaler_key] is None:
+                                    st.error(f"Scaler ({scaler_key}) not found.")
+                                    st.stop()
+                                    
+                                scaler = models[scaler_key]
+                                X_processed = scaler.transform(X_raw)
+                                feature_names_after_preprocessing = available_numeric  # 9 features
+                                
+                            st.status(f"Data prepared: {X_processed.shape} features")
                             
-                        elif model_key == 'ae':
-                            # KernelExplainer for Autoencoder (Reconstruction Error)
-                            st.info("Autoencoder uses KernelExplainer (model-agnostic). This simulates perturbations to find feature impact on Reconstruction Error.")
+                            # ===================================================================
+                            # EXPLAINER SELECTION & COMPUTATION
+                            # ===================================================================
+                            st.status(f"Initializing SHAP Explainer for {explain_model}...")
                             
-                            # Wrapper function must be pickleable or strictly defined
-                            def ae_predict_loss(data_numpy):
-                                # 1. Reconstruct
-                                reconstructed = model.predict(data_numpy, verbose=0)
-                                # 2. Compute MSE per sample (Reconstruction Error)
-                                mse = np.mean(np.power(data_numpy - reconstructed, 2), axis=1)
-                                return mse
+                            if model_key == 'rf':
+                                # TreeExplainer for Random Forest
+                                explainer = shap.TreeExplainer(model)
+                                explainer.assert_additivity = lambda *args, **kwargs: None
+                                shap_values = explainer.shap_values(X_processed)
+                                
+                                # Handle different output formats
+                                if isinstance(shap_values, list):
+                                    shap_values = shap_values[1]  # Binary classification -> Positive class
+                                elif isinstance(shap_values, np.ndarray) and shap_values.ndim == 3:
+                                    shap_values = shap_values[:, :, 1]
+                                    
+                            elif model_key == 'if':
+                                # TreeExplainer for Isolation Forest
+                                # IF outputs anomaly score. Negative = Anomaly, Positive = Normal (usually)
+                                explainer = shap.TreeExplainer(model)
+                                explainer.assert_additivity = lambda *args, **kwargs: None
+                                shap_values = explainer.shap_values(X_processed)
+                                # Shape is usually (samples, features) for IF
+                                
+                            elif model_key == 'ae':
+                                # KernelExplainer for Autoencoder (Reconstruction Error)
+                                st.info("Autoencoder uses KernelExplainer (model-agnostic). This simulates perturbations to find feature impact on Reconstruction Error.")
+                                
+                                # Wrapper function must be pickleable or strictly defined
+                                def ae_predict_loss(data_numpy):
+                                    # 1. Reconstruct
+                                    reconstructed = model.predict(data_numpy, verbose=0)
+                                    # 2. Compute MSE per sample (Reconstruction Error)
+                                    mse = np.mean(np.power(data_numpy - reconstructed, 2), axis=1)
+                                    return mse
+                                
+                                # Use a background dataset (kmeans summary) for speed
+                                # We use X_processed itself if small, or a summary if large
+                                background_data = shap.kmeans(X_processed, min(10, len(X_processed)))
+                                
+                                explainer = shap.KernelExplainer(ae_predict_loss, background_data)
+                                
+                                # Compute SHAP values
+                                with st.spinner("Calculating Kernel SHAP values"):
+                                    shap_values = explainer.shap_values(X_processed, nsamples=100)
                             
-                            # Use a background dataset (kmeans summary) for speed
-                            # We use X_processed itself if small, or a summary if large
-                            background_data = shap.kmeans(X_processed, min(10, len(X_processed)))
+                            st.status("SHAP values computed successfully!")
+                            # st.info(f"Final SHAP shape: {shap_values.shape}")
                             
-                            explainer = shap.KernelExplainer(ae_predict_loss, background_data)
-                            
-                            # Compute SHAP values
-                            with st.spinner("Calculating Kernel SHAP values"):
-                                shap_values = explainer.shap_values(X_processed, nsamples=100)
-                        
-                        st.status("SHAP values computed successfully!")
-                        st.info(f"Final SHAP shape: {shap_values.shape}")
-                        
-                        # Store in session state
-                        st.session_state.shap_values = shap_values
-                        st.session_state.shap_feature_names = feature_names_after_preprocessing
-                        st.session_state.shap_X_processed = X_processed
-                        st.session_state.shap_explainer = explainer
-                        st.session_state.shap_model = model
-                        st.session_state.shap_model_type = model_key # Store type for logic
-                        st.session_state.shap_computed = True
+                            # Store in session state
+                            st.session_state.shap_values = shap_values
+                            st.session_state.shap_feature_names = feature_names_after_preprocessing
+                            st.session_state.shap_X_processed = X_processed
+                            st.session_state.shap_explainer = explainer
+                            st.session_state.shap_model = model
+                            st.session_state.shap_model_type = model_key # Store type for logic
+                            st.session_state.shap_computed = True
+
+                        # Clear status messages after successful computation
+                        status_container.empty()
                         
                     except Exception as e:
                         st.error(f"Critical Error during SHAP generation: {str(e)}")
@@ -1969,17 +2198,17 @@ elif page == "Feature Explainability":
                         use_container_width=True
                     )
                 
-                with col3:
-                    st.info("Analysis exported successfully!")
+                #with col3:
+                    #st.info("Analysis exported successfully!")
                 
-                st.success("SHAP analysis complete! Review the visualizations above for insights.")
+                #st.success("SHAP analysis complete! Review the visualizations above for insights.")
     
     except Exception as e:
         st.error(f"Error in Feature Explainability page: {e}")
         st.exception(e)
 
 # ============================================================================
-# PAGE 7: ACTIONS
+# PAGE 8: ACTIONS
 # ============================================================================
 elif page == "Actions":
     try:
@@ -2007,17 +2236,21 @@ elif page == "Actions":
             else:
                 st.header(f"{len(alerts_df)} Alerts Detected")
                 
+                # Retrieve threshold from session state
+                current_threshold = st.session_state.predictions['ensemble'].get('threshold', 0.7)
+                
                 # Summary statistics
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
-                    critical = (alerts_df['Ensemble_Score'] >= 0.9).sum()
-                    st.metric("🔴 Critical", critical)
+                    critical_count = (alerts_df['Ensemble_Score'] >= 0.9).sum()
+                    st.metric("🔴 Critical", critical_count)
                 with col2:
-                    high = ((alerts_df['Ensemble_Score'] >= 0.8) & (alerts_df['Ensemble_Score'] < 0.9)).sum()
-                    st.metric("🟠 High", high)
+                    high_count = ((alerts_df['Ensemble_Score'] >= 0.8) & (alerts_df['Ensemble_Score'] < 0.9)).sum()
+                    st.metric("🟠 High", high_count)
                 with col3:
-                    medium = ((alerts_df['Ensemble_Score'] >= 0.7) & (alerts_df['Ensemble_Score'] < 0.8)).sum()
-                    st.metric("🟡 Medium", medium)
+                    # Medium on this page is anything between the alert threshold and 0.8
+                    medium_count = ((alerts_df['Ensemble_Score'] >= current_threshold) & (alerts_df['Ensemble_Score'] < 0.8)).sum()
+                    st.metric("🟡 Medium", medium_count)
                 with col4:
                     st.metric("⏱️ Avg Response Time", "2.3 min")
                 
